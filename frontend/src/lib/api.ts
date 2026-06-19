@@ -56,6 +56,35 @@ export interface UploadResult {
   filename: string;
 }
 
+export interface Holding {
+  symbol: string;
+  name: string;
+  quantity: number;
+  average_cost: number | null;
+  current_price: number | null;
+  market_value: number | null;
+  unrealized_pnl: number | null;
+  pnl_percent: number | null;
+  side: string;
+}
+
+export interface PortfolioSummary {
+  market_value: number;
+  cost_basis: number;
+  unrealized_pnl: number;
+  pnl_percent: number | null;
+  cash: number | null;
+}
+
+export interface PortfolioHoldings {
+  connected: boolean;
+  profile: string | null;
+  is_paper: boolean | null;
+  holdings: Holding[];
+  summary: PortfolioSummary;
+  error: string | null;
+}
+
 async function uploadFile(file: File): Promise<UploadResult> {
   const form = new FormData();
   form.append("file", file);
@@ -84,6 +113,10 @@ export const api = {
   getRunCode: (id: string) => request<Record<string, string>>(`/runs/${id}/code`),
   getRunPine: (id: string) => request<PineScriptResult>(`/runs/${id}/pine`),
   listSessions: () => request<SessionItem[]>("/sessions"),
+  getPortfolioHoldings: (profileId?: string) => {
+    const url = profileId ? appendQueryParam("/portfolio/holdings", "profile_id", profileId) : "/portfolio/holdings";
+    return request<PortfolioHoldings>(url);
+  },
   createSession: (title?: string) => request<SessionItem>("/sessions", { method: "POST", body: JSON.stringify({ title: title || "" }) }),
   deleteSession: (sid: string) => request<{ status: string }>(`/sessions/${sid}`, { method: "DELETE" }),
   renameSession: (sid: string, title: string) => request<{ status: string }>(`/sessions/${sid}`, { method: "PATCH", body: JSON.stringify({ title }) }),
