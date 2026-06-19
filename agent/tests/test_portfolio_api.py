@@ -133,8 +133,8 @@ def _positions_payload(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {"status": "ok", "profile": "alpaca-paper", "is_paper": True, "positions": rows}
 
 
-def test_route_connected() -> None:
-    monkeypatch_positions(_alpaca_row(), cash=5000.0)
+def test_route_connected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch_positions(monkeypatch, _alpaca_row(), cash=5000.0)
     with _client() as c:
         r = c.get("/portfolio/holdings")
     assert r.status_code == 200
@@ -147,8 +147,8 @@ def test_route_connected() -> None:
     assert body["summary"]["cash"] == 5000.0
 
 
-def test_route_disconnected_on_import_error() -> None:
-    monkeypatch_positions(raises=ImportError("alpaca-py not installed"))
+def test_route_disconnected_on_import_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch_positions(monkeypatch, raises=ImportError("alpaca-py not installed"))
     with _client() as c:
         r = c.get("/portfolio/holdings")
     assert r.status_code == 200
@@ -158,8 +158,8 @@ def test_route_disconnected_on_import_error() -> None:
     assert body["holdings"] == []
 
 
-def test_route_disconnected_on_timeout() -> None:
-    monkeypatch_positions(raises=TimeoutError("broker timed out"))
+def test_route_disconnected_on_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch_positions(monkeypatch, raises=TimeoutError("broker timed out"))
     with _client() as c:
         r = c.get("/portfolio/holdings")
     assert r.status_code == 200
@@ -168,8 +168,8 @@ def test_route_disconnected_on_timeout() -> None:
     assert "超时" in body["error"] or "timeout" in body["error"].lower()
 
 
-def test_route_disconnected_on_value_error() -> None:
-    monkeypatch_positions(raises=ValueError("unknown profile id"))
+def test_route_disconnected_on_value_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch_positions(monkeypatch, raises=ValueError("unknown profile id"))
     with _client() as c:
         r = c.get("/portfolio/holdings")
     assert r.status_code == 200
@@ -177,8 +177,8 @@ def test_route_disconnected_on_value_error() -> None:
     assert body["connected"] is False
 
 
-def test_route_disconnected_on_generic_error() -> None:
-    monkeypatch_positions(raises=RuntimeError("unexpected"))
+def test_route_disconnected_on_generic_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch_positions(monkeypatch, raises=RuntimeError("unexpected"))
     with _client() as c:
         r = c.get("/portfolio/holdings")
     assert r.status_code == 200
@@ -187,8 +187,8 @@ def test_route_disconnected_on_generic_error() -> None:
     assert "读取持仓失败" in body["error"]
 
 
-def test_route_empty_holdings() -> None:
-    monkeypatch_positions(*[], cash=0.0)
+def test_route_empty_holdings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch_positions(monkeypatch, *[], cash=0.0)
     with _client() as c:
         r = c.get("/portfolio/holdings")
     assert r.status_code == 200
@@ -198,30 +198,30 @@ def test_route_empty_holdings() -> None:
     assert body["summary"]["market_value"] == 0.0
 
 
-def test_route_cache_hit() -> None:
-    calls = monkeypatch_positions(_alpaca_row(), cash=1.0, count_calls=True)
+def test_route_cache_hit(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = monkeypatch_positions(monkeypatch, _alpaca_row(), cash=1.0, count_calls=True)
     with _client() as c:
         c.get("/portfolio/holdings")
         c.get("/portfolio/holdings")
     assert calls["n"] == 1, "second call within TTL must hit cache, not the broker"
 
 
-def test_route_force_bypasses_cache() -> None:
-    calls = monkeypatch_positions(_alpaca_row(), cash=1.0, count_calls=True)
+def test_route_force_bypasses_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = monkeypatch_positions(monkeypatch, _alpaca_row(), cash=1.0, count_calls=True)
     with _client() as c:
         c.get("/portfolio/holdings")
         c.get("/portfolio/holdings?force=1")
     assert calls["n"] == 2
 
 
-def test_route_profile_id_passthrough() -> None:
+def test_route_profile_id_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
     seen = {}
 
     def _get(profile_id=None, **o):
         seen["profile_id"] = profile_id
         return _positions_payload([])
 
-    monkeypatch_positions_fn(_get, cash=0.0)
+    monkeypatch_positions_fn(monkeypatch, _get, cash=0.0)
     with _client() as c:
         c.get("/portfolio/holdings?profile_id=futu-live")
     assert seen["profile_id"] == "futu-live"
@@ -232,12 +232,13 @@ def test_route_profile_id_passthrough() -> None:
 # ---------------------------------------------------------------------------
 
 def monkeypatch_positions(
+    monkeypatch: pytest.MonkeyPatch,
     *rows: dict[str, Any],
     cash: float = 0.0,
     raises: BaseException | None = None,
     count_calls: bool = False,
 ) -> dict[str, int]:
-    """Patch trading.service.get_positions/get_account on the module under test.
+    """Patch trading.service.get_positions/get_account via monkeypatch (auto-cleanup).
 
     Returns a {"n": int} counter when count_calls=True so callers can assert
     call counts (cache behavior).
@@ -251,13 +252,19 @@ def monkeypatch_positions(
             raise raises
         return _positions_payload(list(rows))
 
-    monkeypatch_positions_fn(_get, cash=cash)
+    monkeypatch_positions_fn(monkeypatch, _get, cash=cash)
     return counter
 
 
-def monkeypatch_positions_fn(get_fn, *, cash: float = 0.0) -> None:
-    """Patch with caller-supplied get_positions; account returns a fixed cash."""
-    import src.api.portfolio_routes as pr  # local import to patch the name used by the route
+def monkeypatch_positions_fn(monkeypatch: pytest.MonkeyPatch, get_fn, *, cash: float = 0.0) -> None:
+    """Patch with caller-supplied get_positions; account returns a fixed cash.
 
-    pr.trading_service.get_positions = get_fn  # type: ignore[attr-defined]
-    pr.trading_service.get_account = lambda profile_id=None, **o: {"cash": cash}  # type: ignore[attr-defined]
+    Uses ``monkeypatch.setattr`` so the real ``trading_service`` functions are
+    restored after each test (no stale-patch leakage between tests).
+    """
+    import src.api.portfolio_routes as pr
+
+    monkeypatch.setattr(pr.trading_service, "get_positions", get_fn)
+    monkeypatch.setattr(pr.trading_service, "get_account",
+                        lambda profile_id=None, **o: {"cash": cash})
+

@@ -215,6 +215,9 @@ async def _read_holdings(profile_id: Optional[str]) -> HoldingsResponse:
     account: Optional[dict[str, Any]] = None
     try:
         account = await asyncio.to_thread(trading_service.get_account, profile_id)
+    except (ImportError, ValueError, TimeoutError, ConnectionError, OSError) as exc:
+        logger.warning("portfolio get_account failed (positions still returned): %s",
+                       redact_payload({"profile_id": profile_id, "error": str(exc)}))
     except Exception as exc:
         logger.warning("portfolio get_account failed (positions still returned): %s",
                        redact_payload({"profile_id": profile_id, "error": str(exc)}))
