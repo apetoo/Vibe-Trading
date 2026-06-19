@@ -50,7 +50,9 @@ export function PortfolioMenu({ collapsed }: { collapsed: boolean }) {
     setInFlight(true);
     if (!dataRef.current) setStatus("loading");
     try {
-      const result = await api.getPortfolioHoldings();
+      // `force` propagates to the backend (?force=1) to bypass its 30s cache
+      // so a manual refresh always returns fresh broker data.
+      const result = await api.getPortfolioHoldings(undefined, force);
       setData(result);
       setStatus("ready");
       lastFetchAt.current = Date.now();

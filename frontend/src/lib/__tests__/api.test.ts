@@ -27,4 +27,14 @@ describe("api.getPortfolioHoldings", () => {
     const url = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(url).toBe("/portfolio/holdings?profile_id=futu-live");
   });
+
+  it("appends force=1 when force=true (manual refresh bypasses backend cache)", async () => {
+    (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve(JSON.stringify({ connected: true, holdings: [] })),
+    });
+    await api.getPortfolioHoldings(undefined, true);
+    const url = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(url).toBe("/portfolio/holdings?force=1");
+  });
 });

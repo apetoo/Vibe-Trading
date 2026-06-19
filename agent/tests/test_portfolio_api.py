@@ -227,6 +227,26 @@ def test_route_profile_id_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
     assert seen["profile_id"] == "futu-live"
 
 
+def test_route_account_failure_keeps_positions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """get_positions succeeds but get_account raises -> still connected, cash=None."""
+    import src.api.portfolio_routes as pr
+
+    monkeypatch.setattr(pr.trading_service, "get_positions",
+                        lambda profile_id=None, **o: _positions_payload([_alpaca_row()]))
+
+    def _account_boom(profile_id=None, **o):
+        raise TimeoutError("account endpoint timed out")
+
+    monkeypatch.setattr(pr.trading_service, "get_account", _account_boom)
+    with _client() as c:
+        r = c.get("/portfolio/holdings")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["connected"] is True
+    assert body["holdings"][0]["symbol"] == "AAPL"
+    assert body["summary"]["cash"] is None  # account failed -> cash degrades
+
+
 # ---------------------------------------------------------------------------
 # Helpers for monkeypatching trading.service
 # ---------------------------------------------------------------------------

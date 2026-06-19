@@ -113,8 +113,10 @@ export const api = {
   getRunCode: (id: string) => request<Record<string, string>>(`/runs/${id}/code`),
   getRunPine: (id: string) => request<PineScriptResult>(`/runs/${id}/pine`),
   listSessions: () => request<SessionItem[]>("/sessions"),
-  getPortfolioHoldings: (profileId?: string) => {
-    const url = profileId ? appendQueryParam("/portfolio/holdings", "profile_id", profileId) : "/portfolio/holdings";
+  getPortfolioHoldings: (profileId?: string, force = false) => {
+    let url = "/portfolio/holdings";
+    if (profileId) url = appendQueryParam(url, "profile_id", profileId);
+    if (force) url = appendQueryParam(url, "force", "1");
     return request<PortfolioHoldings>(url);
   },
   createSession: (title?: string) => request<SessionItem>("/sessions", { method: "POST", body: JSON.stringify({ title: title || "" }) }),
