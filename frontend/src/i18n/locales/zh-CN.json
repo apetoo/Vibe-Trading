@@ -524,5 +524,21 @@
   },
   "errorBoundary": {
     "somethingWrong": "出了点问题"
+  },
+  "portfolio": {
+    "title": "持仓",
+    "refresh": "刷新",
+    "totalValue": "总市值",
+    "cost": "成本",
+    "pnl": "盈亏",
+    "quantity": "持仓",
+    "price": "现价",
+    "cash": "现金",
+    "loading": "加载持仓中…",
+    "empty": "暂无持仓",
+    "disconnected": "未连接券商",
+    "connectCta": "连接券商 →",
+    "error": "加载持仓失败",
+    "retry": "重试"
   }
 }

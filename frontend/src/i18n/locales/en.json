@@ -524,5 +524,21 @@
   },
   "errorBoundary": {
     "somethingWrong": "Something went wrong"
+  },
+  "portfolio": {
+    "title": "Portfolio",
+    "refresh": "Refresh",
+    "totalValue": "Total Value",
+    "cost": "Cost",
+    "pnl": "P&L",
+    "quantity": "Qty",
+    "price": "Price",
+    "cash": "Cash",
+    "loading": "Loading positions…",
+    "empty": "No positions yet",
+    "disconnected": "Broker not connected",
+    "connectCta": "Connect a broker →",
+    "error": "Failed to load positions",
+    "retry": "Retry"
   }
 }
