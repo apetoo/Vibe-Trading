@@ -7,6 +7,7 @@ import { useDarkMode } from "@/hooks/useDarkMode";
 import { api, type SessionItem } from "@/lib/api";
 import { useAgentStore } from "@/stores/agent";
 import { ConnectionBanner } from "@/components/layout/ConnectionBanner";
+import { PortfolioMenu } from "@/components/portfolio/PortfolioMenu";
 
 // Bump on each release; one place keeps the footer in sync with package.json.
 const APP_VERSION = "v0.1.10";
@@ -85,6 +86,8 @@ export function Layout() {
             {!collapsed && "Vibe-Trading"}
           </Link>
         </div>
+
+        <PortfolioMenu collapsed={collapsed} />
 
         {/* Nav */}
         <nav className={cn("space-y-0.5", collapsed ? "p-1" : "p-2")}>
