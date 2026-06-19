@@ -174,3 +174,93 @@ def _build_summary(holdings: list[Holding], account: Optional[dict[str, Any]]) -
         pnl_percent=pnl_percent,
         cash=cash,
     )
+
+
+# ---------------------------------------------------------------------------
+# Route
+# ---------------------------------------------------------------------------
+
+def _disconnected(error: str, profile: Optional[str] = None,
+                  is_paper: Optional[bool] = None) -> HoldingsResponse:
+    return HoldingsResponse(
+        connected=False,
+        profile=profile,
+        is_paper=is_paper,
+        holdings=[],
+        summary=PortfolioSummary(),
+        error=error,
+    )
+
+
+async def _read_holdings(profile_id: Optional[str]) -> HoldingsResponse:
+    """Fetch + normalize positions off the event loop. Never raises to the route."""
+    try:
+        positions_payload = await asyncio.to_thread(trading_service.get_positions, profile_id)
+    except ImportError as exc:
+        return _disconnected(f"连接器 SDK 未安装：{exc}")
+    except ValueError:
+        return _disconnected("未找到交易连接配置，请在设置中授权连接器")
+    except (TimeoutError, ConnectionError, OSError):
+        return _disconnected("券商连接超时，请稍后重试")
+    except Exception as exc:  # last resort — log the type, keep the user message generic
+        logger.error("portfolio get_positions failed: %s",
+                     redact_payload({"profile_id": profile_id, "error": str(exc)}))
+        return _disconnected("读取持仓失败，请稍后重试")
+
+    profile = positions_payload.get("profile") if isinstance(positions_payload, dict) else None
+    is_paper = positions_payload.get("is_paper") if isinstance(positions_payload, dict) else None
+    rows = positions_payload.get("positions", []) if isinstance(positions_payload, dict) else []
+    holdings = [_normalize_row(r) for r in rows if isinstance(r, dict)]
+
+    account: Optional[dict[str, Any]] = None
+    try:
+        account = await asyncio.to_thread(trading_service.get_account, profile_id)
+    except Exception as exc:
+        logger.warning("portfolio get_account failed (positions still returned): %s",
+                       redact_payload({"profile_id": profile_id, "error": str(exc)}))
+
+    return HoldingsResponse(
+        connected=True,
+        profile=profile,
+        is_paper=is_paper,
+        holdings=holdings,
+        summary=_build_summary(holdings, account),
+    )
+
+
+def register_portfolio_routes(app: FastAPI, require_auth: AuthDep | None = None) -> None:
+    """Mount the portfolio holdings routes onto ``app``.
+
+    Mirrors ``register_alpha_routes``: when ``require_auth`` is not passed
+    explicitly, resolve it from the host ``api_server`` module via
+    ``sys.modules``.
+    """
+    if require_auth is None:
+        import sys as _sys
+        host = _sys.modules.get("api_server") or _sys.modules.get("agent.api_server")
+        if host is None:  # pragma: no cover
+            raise RuntimeError(
+                "register_portfolio_routes: api_server module not in sys.modules; "
+                "pass require_auth explicitly"
+            )
+        require_auth = host.require_auth
+
+    @app.get("/portfolio/holdings", dependencies=[Depends(require_auth)])
+    async def get_holdings(
+        profile_id: Optional[str] = Query(None, max_length=128),
+        force: Optional[str] = Query(None),
+    ) -> HoldingsResponse:
+        cache_key = profile_id
+        if not (force == "1" or force == "true"):
+            cached = _positions_cache.get(cache_key)
+            if cached and cached[0] > time.monotonic():
+                return HoldingsResponse(**cached[1])
+
+        response = await _read_holdings(profile_id)
+        # Cache only successful reads; disconnected/error states stay fresh.
+        if response.connected:
+            _positions_cache[cache_key] = (
+                time.monotonic() + _CACHE_TTL_SECONDS,
+                response.model_dump(),
+            )
+        return response

@@ -3267,6 +3267,10 @@ async def stop_runner_endpoint(payload: LiveRunnerControlRequest):
 from src.api.alpha_routes import register_alpha_routes  # noqa: E402
 register_alpha_routes(app)
 
+# Portfolio holdings route (Web UI sidebar popover) — defined in src/api/portfolio_routes.py
+from src.api.portfolio_routes import register_portfolio_routes  # noqa: E402
+register_portfolio_routes(app)
+
 
 # ============================================================================
 # Main Entry Point

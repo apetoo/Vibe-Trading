@@ -12,10 +12,16 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
+import api_server  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+from src.trading import service as trading_service  # noqa: E402
+
 from src.api.portfolio_routes import (  # noqa: E402
     Holding,
     _build_summary,
     _normalize_row,
+    _positions_cache,
 )
 
 
@@ -106,3 +112,152 @@ def test_build_summary_empty() -> None:
     assert summary.unrealized_pnl == 0.0
     assert summary.pnl_percent is None
     assert summary.cash is None
+
+
+# ---------------------------------------------------------------------------
+# Route tests (GET /portfolio/holdings)
+# ---------------------------------------------------------------------------
+
+def _client() -> TestClient:
+    return TestClient(api_server.app, client=("127.0.0.1", 50000))
+
+
+@pytest.fixture(autouse=True)
+def _clear_cache():
+    _positions_cache.clear()
+    yield
+    _positions_cache.clear()
+
+
+def _positions_payload(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"status": "ok", "profile": "alpaca-paper", "is_paper": True, "positions": rows}
+
+
+def test_route_connected() -> None:
+    monkeypatch_positions(_alpaca_row(), cash=5000.0)
+    with _client() as c:
+        r = c.get("/portfolio/holdings")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["connected"] is True
+    assert body["profile"] == "alpaca-paper"
+    assert body["is_paper"] is True
+    assert body["holdings"][0]["symbol"] == "AAPL"
+    assert body["holdings"][0]["pnl_percent"] == pytest.approx(17.0, abs=0.01)
+    assert body["summary"]["cash"] == 5000.0
+
+
+def test_route_disconnected_on_import_error() -> None:
+    monkeypatch_positions(raises=ImportError("alpaca-py not installed"))
+    with _client() as c:
+        r = c.get("/portfolio/holdings")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["connected"] is False
+    assert "SDK" in body["error"] or "not installed" in body["error"]
+    assert body["holdings"] == []
+
+
+def test_route_disconnected_on_timeout() -> None:
+    monkeypatch_positions(raises=TimeoutError("broker timed out"))
+    with _client() as c:
+        r = c.get("/portfolio/holdings")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["connected"] is False
+    assert "超时" in body["error"] or "timeout" in body["error"].lower()
+
+
+def test_route_disconnected_on_value_error() -> None:
+    monkeypatch_positions(raises=ValueError("unknown profile id"))
+    with _client() as c:
+        r = c.get("/portfolio/holdings")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["connected"] is False
+
+
+def test_route_disconnected_on_generic_error() -> None:
+    monkeypatch_positions(raises=RuntimeError("unexpected"))
+    with _client() as c:
+        r = c.get("/portfolio/holdings")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["connected"] is False
+    assert "读取持仓失败" in body["error"]
+
+
+def test_route_empty_holdings() -> None:
+    monkeypatch_positions(*[], cash=0.0)
+    with _client() as c:
+        r = c.get("/portfolio/holdings")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["connected"] is True
+    assert body["holdings"] == []
+    assert body["summary"]["market_value"] == 0.0
+
+
+def test_route_cache_hit() -> None:
+    calls = monkeypatch_positions(_alpaca_row(), cash=1.0, count_calls=True)
+    with _client() as c:
+        c.get("/portfolio/holdings")
+        c.get("/portfolio/holdings")
+    assert calls["n"] == 1, "second call within TTL must hit cache, not the broker"
+
+
+def test_route_force_bypasses_cache() -> None:
+    calls = monkeypatch_positions(_alpaca_row(), cash=1.0, count_calls=True)
+    with _client() as c:
+        c.get("/portfolio/holdings")
+        c.get("/portfolio/holdings?force=1")
+    assert calls["n"] == 2
+
+
+def test_route_profile_id_passthrough() -> None:
+    seen = {}
+
+    def _get(profile_id=None, **o):
+        seen["profile_id"] = profile_id
+        return _positions_payload([])
+
+    monkeypatch_positions_fn(_get, cash=0.0)
+    with _client() as c:
+        c.get("/portfolio/holdings?profile_id=futu-live")
+    assert seen["profile_id"] == "futu-live"
+
+
+# ---------------------------------------------------------------------------
+# Helpers for monkeypatching trading.service
+# ---------------------------------------------------------------------------
+
+def monkeypatch_positions(
+    *rows: dict[str, Any],
+    cash: float = 0.0,
+    raises: BaseException | None = None,
+    count_calls: bool = False,
+) -> dict[str, int]:
+    """Patch trading.service.get_positions/get_account on the module under test.
+
+    Returns a {"n": int} counter when count_calls=True so callers can assert
+    call counts (cache behavior).
+    """
+    counter = {"n": 0}
+
+    def _get(profile_id=None, **o):
+        if count_calls:
+            counter["n"] += 1
+        if raises is not None:
+            raise raises
+        return _positions_payload(list(rows))
+
+    monkeypatch_positions_fn(_get, cash=cash)
+    return counter
+
+
+def monkeypatch_positions_fn(get_fn, *, cash: float = 0.0) -> None:
+    """Patch with caller-supplied get_positions; account returns a fixed cash."""
+    import src.api.portfolio_routes as pr  # local import to patch the name used by the route
+
+    pr.trading_service.get_positions = get_fn  # type: ignore[attr-defined]
+    pr.trading_service.get_account = lambda profile_id=None, **o: {"cash": cash}  # type: ignore[attr-defined]
