@@ -52,6 +52,13 @@ class Holding(BaseModel):
     market_value: Optional[float] = None
     unrealized_pnl: Optional[float] = None
     pnl_percent: Optional[float] = None
+    # Total cost basis used to compute pnl_percent (explicit connector total
+    # preferred, else average_cost * quantity). Carried on the model so
+    # _build_summary aggregates the SAME denominator per-holding pnl_percent
+    # used — avoiding a silent divergence when a connector's total cost_basis
+    # differs from average_cost * quantity (wash-sale adjustments, lot
+    # liquidations, corporate actions).
+    cost_basis_total: Optional[float] = None
     side: str = ""
 
 
@@ -132,14 +139,25 @@ def _normalize_row(row: dict[str, Any]) -> Holding:
         market_value=market_value,
         unrealized_pnl=unrealized_pnl,
         pnl_percent=pnl_percent,
+        cost_basis_total=cost_basis_total,
         side=side,
     )
 
 
 def _build_summary(holdings: list[Holding], account: Optional[dict[str, Any]]) -> PortfolioSummary:
-    """Aggregate holdings; cash pulled from the account snapshot when present."""
+    """Aggregate holdings; cash pulled from the account snapshot when present.
+
+    Uses each holding's ``cost_basis_total`` (the same denominator
+    ``_normalize_row`` used for its ``pnl_percent``) so the summary P&L% is
+    consistent with the per-row P&L%. Falls back to ``average_cost * quantity``
+    when no total is known.
+    """
     market_value = sum(h.market_value or 0.0 for h in holdings)
-    cost_basis = sum((h.average_cost or 0.0) * h.quantity for h in holdings)
+    cost_basis = sum(
+        h.cost_basis_total if h.cost_basis_total is not None
+        else (h.average_cost or 0.0) * h.quantity
+        for h in holdings
+    )
     unrealized_pnl = sum(h.unrealized_pnl or 0.0 for h in holdings)
     pnl_percent: Optional[float] = None
     if cost_basis > 0:
