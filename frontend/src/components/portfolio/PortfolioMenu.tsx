@@ -23,10 +23,8 @@ function pnlClass(v: number | null | undefined): string {
   return v > 0 ? "text-green-600 dark:text-green-400" : v < 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground";
 }
 
-function pnlMoneyClass(v: number | null | undefined): string {
-  if (v === null || v === undefined) return "text-muted-foreground";
-  return v > 0 ? "text-green-600 dark:text-green-400" : v < 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground";
-}
+// Money and percent P&L use the same coloring rule.
+const pnlMoneyClass = pnlClass;
 
 export function PortfolioMenu({ collapsed }: { collapsed: boolean }) {
   const { t } = useTranslation();
@@ -37,13 +35,20 @@ export function PortfolioMenu({ collapsed }: { collapsed: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const lastFetchAt = useRef<number>(0);
 
+  // Refs mirror state so `load` can read fresh values without depending on
+  // them — keeping `load`'s identity stable so the mount effect fires once.
+  const dataRef = useRef<PortfolioHoldings | null>(null);
+  const inFlightRef = useRef(false);
+  dataRef.current = data;
+  inFlightRef.current = inFlight;
+
   const load = useCallback(async (force = false) => {
     // De-dup concurrent refreshes (double-click guard).
-    if (inFlight) return;
+    if (inFlightRef.current) return;
     const stale = Date.now() - lastFetchAt.current > 60_000;
-    if (!force && data && !stale) return;
+    if (!force && dataRef.current && !stale) return;
     setInFlight(true);
-    if (!data) setStatus("loading");
+    if (!dataRef.current) setStatus("loading");
     try {
       const result = await api.getPortfolioHoldings();
       setData(result);
@@ -54,9 +59,9 @@ export function PortfolioMenu({ collapsed }: { collapsed: boolean }) {
     } finally {
       setInFlight(false);
     }
-  }, [data, inFlight]);
+  }, []);
 
-  // Initial load on mount.
+  // Initial load on mount (load is stable, so this fires exactly once).
   useEffect(() => {
     void load();
   }, [load]);
