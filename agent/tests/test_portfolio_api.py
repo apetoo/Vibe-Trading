@@ -288,3 +288,36 @@ def monkeypatch_positions_fn(monkeypatch: pytest.MonkeyPatch, get_fn, *, cash: f
     monkeypatch.setattr(pr.trading_service, "get_account",
                         lambda profile_id=None, **o: {"cash": cash})
 
+
+
+# ---------------------------------------------------------------------------
+# Adversarial-review hardening (NaN rejection, credential redaction in logs)
+# ---------------------------------------------------------------------------
+
+def test_normalize_row_rejects_nan_and_infinity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Broker stringified NaN/Infinity must degrade to None, not propagate."""
+    h = _normalize_row({
+        "symbol": "X", "quantity": "NaN", "current_price": "Infinity",
+        "average_cost": "-Infinity",
+    })
+    assert h.quantity == 0.0  # NaN quantity -> _first returns None -> `or 0.0`
+    assert h.current_price is None
+    assert h.average_cost is None
+
+
+def test_route_redacts_credential_in_exception_log(monkeypatch: pytest.MonkeyPatch, caplog) -> None:
+    """A broker SDK exception embedding an API key must not reach the log verbatim."""
+    import src.api.portfolio_routes as pr
+    import logging as _logging
+
+    def _boom(profile_id=None, **o):
+        raise RuntimeError("AuthenticationError apiKey AKIAIOSFODNN7EXAMPLE is invalid")
+
+    monkeypatch.setattr(pr.trading_service, "get_positions", _boom)
+    monkeypatch.setattr(pr.trading_service, "get_account", lambda profile_id=None, **o: {})
+    with caplog.at_level(_logging.ERROR):
+        with _client() as c:
+            c.get("/portfolio/holdings")
+    joined = "\n".join(rec.getMessage() for rec in caplog.records)
+    assert "AKIAIOSFODNN7EXAMPLE" not in joined, "API key leaked into log"
+    assert "[redacted]" in joined

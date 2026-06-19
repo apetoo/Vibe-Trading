@@ -171,8 +171,8 @@ export function PortfolioMenu({ collapsed }: { collapsed: boolean }) {
                     <div className="px-3 py-6 text-center text-xs text-muted-foreground">{t("portfolio.empty")}</div>
                   ) : (
                     <div className="max-h-80 overflow-auto">
-                      {data.holdings.map((h) => (
-                        <div key={h.symbol} className="px-3 py-2 border-b last:border-b-0 hover:bg-muted/50">
+                      {data.holdings.map((h, i) => (
+                        <div key={`${i}-${h.symbol}`} className="px-3 py-2 border-b last:border-b-0 hover:bg-muted/50">
                           <div className="flex justify-between items-center">
                             <span className="text-xs font-medium">{h.symbol}</span>
                             <span className={cn("text-xs font-medium", pnlClass(h.pnl_percent))} data-pnl>

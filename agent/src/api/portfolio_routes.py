@@ -22,18 +22,45 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
+import re
 import time
 from typing import Any, Callable, Optional
 
 from fastapi import Depends, FastAPI, Query
 from pydantic import BaseModel, Field
 
-from src.tools.redaction import redact_payload
 from src.trading import service as trading_service
 
 logger = logging.getLogger(__name__)
 
 AuthDep = Callable[..., Any]
+
+# Broker SDK exception messages can embed credentials (e.g. ccxt
+# "AuthenticationError apiKey AK-... is invalid"). ``redact_payload`` only
+# scrubs dict VALUES whose KEYS are sensitive; it does not scan free-text
+# string values, so logging ``str(exc)`` directly can leak secrets. These
+# patterns catch common credential shapes inline before logging.
+_CRED_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(p)
+    for p in (
+        r"(?i)(api[_-]?key|access[_-]?token|secret|bearer|authorization)[\s:=\"]+[A-Za-z0-9_\-\.]{8,}",
+        r"(?i)sk[_-][A-Za-z0-9]{16,}",
+        r"(?i)AKIA[0-9A-Z]{16}",
+    )
+)
+
+
+def _redact_text(text: str) -> str:
+    """Mask credential-like substrings in a free-text string (exception msgs).
+
+    ``redact_payload`` is key-based and does not scan string values, so it is
+    the wrong tool for logging ``str(exc)``. Use this instead.
+    """
+    redacted = text
+    for pat in _CRED_PATTERNS:
+        redacted = pat.sub("[redacted]", redacted)
+    return redacted
 
 # Per-profile in-memory cache: {profile_id|None: (expires_at_epoch, payload)}.
 # 30s TTL avoids hammering broker rate limits when the popover is opened often.
@@ -91,9 +118,15 @@ def _as_float(value: Any) -> Optional[float]:
     if value is None:
         return None
     try:
-        return float(value)
+        f = float(value)
     except (TypeError, ValueError):
         return None
+    # Reject NaN/Infinity: some brokers stringify these ("NaN", "Infinity"),
+    # and Pydantic v2 float fields accept them by default, which would render
+    # as "NaN"/"∞" in the UI. Treat as missing.
+    if not math.isfinite(f):
+        return None
+    return f
 
 
 def _first(row: dict[str, Any], keys: tuple[str, ...]) -> Optional[float]:
@@ -196,15 +229,20 @@ async def _read_holdings(profile_id: Optional[str]) -> HoldingsResponse:
     """Fetch + normalize positions off the event loop. Never raises to the route."""
     try:
         positions_payload = await asyncio.to_thread(trading_service.get_positions, profile_id)
-    except ImportError as exc:
-        return _disconnected(f"连接器 SDK 未安装：{exc}")
+    except ImportError:
+        # Log the (redacted) detail; keep the client message generic so we do
+        # not leak internal module paths from importlib error messages.
+        logger.warning("portfolio get_positions: connector SDK not installed (profile_id=%s)", profile_id)
+        return _disconnected("连接器 SDK 未安装，请联系管理员")
     except ValueError:
+        logger.warning("portfolio get_positions: profile not found / config error (profile_id=%s)", profile_id)
         return _disconnected("未找到交易连接配置，请在设置中授权连接器")
     except (TimeoutError, ConnectionError, OSError):
+        logger.warning("portfolio get_positions: broker timeout/network (profile_id=%s)", profile_id)
         return _disconnected("券商连接超时，请稍后重试")
-    except Exception as exc:  # last resort — log the type, keep the user message generic
-        logger.error("portfolio get_positions failed: %s",
-                     redact_payload({"profile_id": profile_id, "error": str(exc)}))
+    except Exception as exc:  # last resort — log the (redacted) type, generic message
+        logger.error("portfolio get_positions failed (profile_id=%s): %s",
+                     profile_id, _redact_text(str(exc)))
         return _disconnected("读取持仓失败，请稍后重试")
 
     profile = positions_payload.get("profile") if isinstance(positions_payload, dict) else None
@@ -215,12 +253,11 @@ async def _read_holdings(profile_id: Optional[str]) -> HoldingsResponse:
     account: Optional[dict[str, Any]] = None
     try:
         account = await asyncio.to_thread(trading_service.get_account, profile_id)
-    except (ImportError, ValueError, TimeoutError, ConnectionError, OSError) as exc:
-        logger.warning("portfolio get_account failed (positions still returned): %s",
-                       redact_payload({"profile_id": profile_id, "error": str(exc)}))
     except Exception as exc:
-        logger.warning("portfolio get_account failed (positions still returned): %s",
-                       redact_payload({"profile_id": profile_id, "error": str(exc)}))
+        # Non-fatal: positions already succeeded. Log the (redacted) detail so
+        # cash degrading to None is debuggable; keep returning positions.
+        logger.warning("portfolio get_account failed (positions still returned, profile_id=%s): %s",
+                       profile_id, _redact_text(str(exc)))
 
     return HoldingsResponse(
         connected=True,
