@@ -390,7 +390,8 @@ def _apply_filter(df: pd.DataFrame, expr: str) -> pd.DataFrame:
     return df
 
 
-def analyze_trade_journal(file_path: str, analysis_type: str = "full", filter_expr: str = "") -> str:
+def analyze_trade_journal(file_path: str, analysis_type: str = "full",
+                          filter_expr: str = "", update_holdings: bool = True) -> str:
     """Parse a trade journal and return a JSON analysis.
 
     Args:
@@ -400,10 +401,14 @@ def analyze_trade_journal(file_path: str, analysis_type: str = "full", filter_ex
             returns a Phase 4c placeholder.
         filter_expr: Optional filter. Examples: "2026-01 to 2026-03",
             "symbol=600519.SH", "market=china_a".
+        update_holdings: When True (default), aggregate the unmatched FIFO
+            buys into the manual portfolio store at ``~/.vibe-trading/portfolio.json``
+            so the holdings menu reflects the imported journal. Set to False
+            to inspect a journal without touching the user's portfolio.
 
     Returns:
         JSON string. Keys: status, file, format_detected, total_records,
-        date_range, market, profile / behavior (when applicable).
+        date_range, market, profile / behavior, holdings_imported (when applicable).
     """
     try:
         path = safe_user_path(file_path)
@@ -454,6 +459,25 @@ def analyze_trade_journal(file_path: str, analysis_type: str = "full", filter_ex
             "note": "Strategy extraction → backtest bridging lands in Phase 4c.",
         }
 
+    # Update the manual holdings store so the sidebar menu reflects this import.
+    # Use the UNFILTERED dataframe: filtering by date or symbol shouldn't shrink
+    # the user's actual portfolio.
+    if update_holdings:
+        try:
+            from src.portfolio.manual_holdings import (
+                compute_holdings_from_journal,
+                replace_all,
+            )
+            holdings = compute_holdings_from_journal(df)
+            replace_all(holdings)
+            result["holdings_imported"] = {
+                "count": len(holdings),
+                "symbols": [h.symbol for h in holdings],
+            }
+        except Exception as exc:  # never let store I/O fail the analyzer
+            logger.warning("manual holdings update failed: %s", exc)
+            result["holdings_imported"] = {"status": "skipped", "error": str(exc)}
+
     return json.dumps(result, ensure_ascii=False, default=str)
 
 
@@ -501,6 +525,17 @@ class TradeJournalTool(BaseTool):
                 "description": "Optional filter, e.g. '2026-01 to 2026-03', 'symbol=600519.SH', 'market=china_a'.",
                 "default": "",
             },
+            "update_holdings": {
+                "type": "boolean",
+                "description": (
+                    "When true (default), aggregate the unmatched FIFO buys "
+                    "from the journal into the user's manual portfolio store "
+                    "(~/.vibe-trading/portfolio.json) so the sidebar holdings "
+                    "menu reflects this import. Set false to inspect a CSV "
+                    "without touching the portfolio."
+                ),
+                "default": True,
+            },
         },
         "required": ["file_path"],
     }
@@ -511,4 +546,5 @@ class TradeJournalTool(BaseTool):
             file_path=kwargs["file_path"],
             analysis_type=kwargs.get("analysis_type", "full"),
             filter_expr=kwargs.get("filter_expr", ""),
+            update_holdings=kwargs.get("update_holdings", True),
         )
