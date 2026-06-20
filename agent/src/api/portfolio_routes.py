@@ -1,21 +1,26 @@
 """Portfolio holdings HTTP route for the Web UI.
 
 Mounted by ``agent/api_server.py`` via ``register_portfolio_routes(app)``.
-Surfaces real broker positions from ``src.trading.service`` (the 9 trading
-connectors) as a read-only ``GET /portfolio/holdings`` endpoint consumed by the
-sidebar portfolio popover.
 
-Design notes (see DESIGN.md §4-§5, §13):
-- ``get_positions`` / ``get_account`` are synchronous blocking SDK/HTTP calls.
-  The route is ``async def`` and offloads them to ``asyncio.to_thread`` so a
-  slow broker never stalls the FastAPI event loop.
+Two data sources, in this priority:
+    1. **Manual holdings** at ``~/.vibe-trading/portfolio.json``. The user
+       maintains this via CSV import (``analyze_trade_journal``), the agent
+       conversation (``manage_portfolio`` tool), or the Settings table UI
+       (``PUT/DELETE /portfolio/holdings/<symbol>``,
+       ``POST /portfolio/holdings/replace``). Live prices come from the
+       repo's market-data loader layer.
+    2. **Broker positions** at ``trading.service.get_positions``, kept as a
+       fallback for users who DO connect a broker. Used only when the
+       manual store is empty.
+
+Design notes (DESIGN.md §4-§5, §13):
+- Sync ``trading.service`` calls run via ``asyncio.to_thread`` so a slow
+  broker never stalls the FastAPI event loop.
 - Connector position rows use inconsistent field names (alpaca: ``qty``/
-  ``avg_entry_price``; dhan: ``netQty``/``costPrice``). ``_normalize_row`` maps
-  the common aliases and degrades missing cost basis to ``None`` (UI shows ``—``)
-  rather than fabricating a P&L. This intentionally does NOT reuse
-  ``src.live.runtime.reconcile`` private helpers, to keep the read-only menu
-  decoupled from the live-enforcement runtime.
-- Position data is sensitive; logs are scrubbed with ``redact_payload``.
+  ``avg_entry_price``; dhan: ``netQty``/``costPrice``). ``_normalize_row``
+  maps the common aliases and degrades missing cost basis to ``None``
+  (UI shows ``—``) rather than fabricating a P&L.
+- Position data is sensitive; logs are scrubbed with ``_redact_text``.
 """
 
 from __future__ import annotations
@@ -27,7 +32,7 @@ import re
 import time
 from typing import Any, Callable, Optional
 
-from fastapi import Depends, FastAPI, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from src.trading import service as trading_service
@@ -226,24 +231,69 @@ def _disconnected(error: str, profile: Optional[str] = None,
 
 
 async def _read_holdings(profile_id: Optional[str]) -> HoldingsResponse:
-    """Fetch + normalize positions off the event loop. Never raises to the route."""
+    """Resolve holdings from manual store first; fall back to broker.
+
+    Never raises to the route — exceptions become a disconnected response
+    (the menu is informational, not transactional).
+    """
+    # ----- 1. Manual store wins when populated -------------------------------
+    try:
+        from src.portfolio.manual_holdings import list_holdings as _list_manual
+        manual = _list_manual()
+    except Exception as exc:  # bad file, missing dep, etc.
+        logger.warning("manual holdings store unreadable: %s", _redact_text(str(exc)))
+        manual = []
+
+    if manual:
+        symbols = [h.symbol for h in manual]
+        prices = await asyncio.to_thread(_fetch_spot_prices, symbols)
+        rows: list[Holding] = []
+        for m in manual:
+            current = prices.get(m.symbol)
+            mv = round(current * m.quantity, 2) if current is not None else None
+            cost_total = round(m.average_cost * m.quantity, 2) if m.average_cost else None
+            pnl = round(mv - cost_total, 2) if (mv is not None and cost_total is not None) else None
+            pnl_pct: Optional[float] = None
+            if pnl is not None and cost_total and cost_total > 0:
+                pnl_pct = round(pnl / cost_total * 100, 2)
+            rows.append(Holding(
+                symbol=m.symbol,
+                name=m.name or "",
+                quantity=m.quantity,
+                average_cost=m.average_cost,
+                current_price=current,
+                market_value=mv,
+                unrealized_pnl=pnl,
+                pnl_percent=pnl_pct,
+                cost_basis_total=cost_total,
+                side="long",
+            ))
+        return HoldingsResponse(
+            connected=True,
+            profile="manual",
+            is_paper=None,
+            holdings=rows,
+            summary=_build_summary(rows, None),
+        )
+
+    # ----- 2. Fall back to broker --------------------------------------------
     try:
         positions_payload = await asyncio.to_thread(trading_service.get_positions, profile_id)
     except ImportError:
         # Log the (redacted) detail; keep the client message generic so we do
         # not leak internal module paths from importlib error messages.
         logger.warning("portfolio get_positions: connector SDK not installed (profile_id=%s)", profile_id)
-        return _disconnected("连接器 SDK 未安装，请联系管理员")
+        return _disconnected("尚未导入持仓 — 请上传券商交易记录或在设置中手动添加")
     except ValueError:
         logger.warning("portfolio get_positions: profile not found / config error (profile_id=%s)", profile_id)
-        return _disconnected("未找到交易连接配置，请在设置中授权连接器")
+        return _disconnected("尚未导入持仓 — 请上传券商交易记录或在设置中手动添加")
     except (TimeoutError, ConnectionError, OSError):
         logger.warning("portfolio get_positions: broker timeout/network (profile_id=%s)", profile_id)
         return _disconnected("券商连接超时，请稍后重试")
     except Exception as exc:  # last resort — log the (redacted) type, generic message
         logger.error("portfolio get_positions failed (profile_id=%s): %s",
                      profile_id, _redact_text(str(exc)))
-        return _disconnected("读取持仓失败，请稍后重试")
+        return _disconnected("尚未导入持仓 — 请上传券商交易记录或在设置中手动添加")
 
     profile = positions_payload.get("profile") if isinstance(positions_payload, dict) else None
     is_paper = positions_payload.get("is_paper") if isinstance(positions_payload, dict) else None
@@ -266,6 +316,71 @@ async def _read_holdings(profile_id: Optional[str]) -> HoldingsResponse:
         holdings=holdings,
         summary=_build_summary(holdings, account),
     )
+
+
+def _fetch_spot_prices(symbols: list[str]) -> dict[str, Optional[float]]:
+    """Fetch latest close for each symbol via the repo loader layer.
+
+    Returns ``{symbol: latest_close_or_None}``. Best-effort: any symbol that
+    fails to resolve simply maps to ``None`` (UI shows ``—``).
+    """
+    if not symbols:
+        return {}
+    try:
+        from datetime import date, timedelta
+        from src.market_data import fetch_market_data
+    except Exception as exc:
+        logger.warning("market data import failed: %s", _redact_text(str(exc)))
+        return {}
+
+    out: dict[str, Optional[float]] = {s: None for s in symbols}
+    end = date.today()
+    start = end - timedelta(days=10)  # cover weekends/holidays
+    try:
+        data = fetch_market_data(
+            codes=symbols,
+            start_date=start.isoformat(),
+            end_date=end.isoformat(),
+            source="auto",
+        )
+    except Exception as exc:
+        logger.warning("market data fetch failed: %s", _redact_text(str(exc)))
+        return out
+
+    for sym in symbols:
+        rows = data.get(sym)
+        if not isinstance(rows, list) or not rows:
+            continue
+        last = rows[-1]
+        if not isinstance(last, dict):
+            continue
+        for key in ("close", "Close", "CLOSE"):
+            v = last.get(key)
+            if isinstance(v, (int, float)) and math.isfinite(float(v)):
+                out[sym] = float(v)
+                break
+    return out
+
+
+# ---------------------------------------------------------------------------
+# CRUD request models
+# ---------------------------------------------------------------------------
+
+class HoldingUpsertRequest(BaseModel):
+    quantity: float = Field(..., description="Total quantity held (must be > 0).")
+    average_cost: float = Field(..., description="Per-unit average cost.")
+    name: str = Field("", description="Display name (optional).")
+
+
+class HoldingsReplaceItem(BaseModel):
+    symbol: str
+    quantity: float
+    average_cost: float
+    name: str = ""
+
+
+class HoldingsReplaceRequest(BaseModel):
+    holdings: list[HoldingsReplaceItem]
 
 
 def register_portfolio_routes(app: FastAPI, require_auth: AuthDep | None = None) -> None:
@@ -304,3 +419,46 @@ def register_portfolio_routes(app: FastAPI, require_auth: AuthDep | None = None)
                 response.model_dump(),
             )
         return response
+
+    # ---- Manual holdings CRUD (Settings page) -------------------------------
+
+    @app.put("/portfolio/holdings/{symbol}", dependencies=[Depends(require_auth)])
+    async def put_holding(symbol: str, body: HoldingUpsertRequest) -> dict[str, Any]:
+        if body.quantity <= 0:
+            raise HTTPException(status_code=400, detail="quantity must be > 0")
+        if body.average_cost < 0:
+            raise HTTPException(status_code=400, detail="average_cost must be >= 0")
+        from src.portfolio.manual_holdings import set_holding
+        h = set_holding(symbol, body.quantity, body.average_cost, body.name)
+        _positions_cache.clear()  # invalidate cached views
+        return {
+            "status": "ok",
+            "holding": {
+                "symbol": h.symbol, "name": h.name,
+                "quantity": h.quantity, "average_cost": h.average_cost,
+            } if h else None,
+        }
+
+    @app.delete("/portfolio/holdings/{symbol}", dependencies=[Depends(require_auth)])
+    async def delete_holding_route(symbol: str) -> dict[str, str]:
+        from src.portfolio.manual_holdings import delete_holding
+        delete_holding(symbol)
+        _positions_cache.clear()
+        return {"status": "ok"}
+
+    @app.post("/portfolio/holdings/replace", dependencies=[Depends(require_auth)])
+    async def replace_holdings(body: HoldingsReplaceRequest) -> dict[str, Any]:
+        from src.portfolio.manual_holdings import ManualHolding, replace_all
+        new_holdings = []
+        for item in body.holdings:
+            if item.quantity <= 0:
+                continue
+            new_holdings.append(ManualHolding(
+                symbol=item.symbol,
+                quantity=item.quantity,
+                average_cost=item.average_cost,
+                name=item.name,
+            ))
+        replace_all(new_holdings)
+        _positions_cache.clear()
+        return {"status": "ok", "count": len(new_holdings)}

@@ -154,7 +154,7 @@ def test_route_disconnected_on_import_error(monkeypatch: pytest.MonkeyPatch) -> 
     assert r.status_code == 200
     body = r.json()
     assert body["connected"] is False
-    assert "SDK" in body["error"] or "not installed" in body["error"]
+    assert "导入持仓" in body["error"]
     assert body["holdings"] == []
 
 
@@ -184,7 +184,7 @@ def test_route_disconnected_on_generic_error(monkeypatch: pytest.MonkeyPatch) ->
     assert r.status_code == 200
     body = r.json()
     assert body["connected"] is False
-    assert "读取持仓失败" in body["error"]
+    assert "导入持仓" in body["error"]
 
 
 def test_route_empty_holdings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -321,3 +321,133 @@ def test_route_redacts_credential_in_exception_log(monkeypatch: pytest.MonkeyPat
     joined = "\n".join(rec.getMessage() for rec in caplog.records)
     assert "AKIAIOSFODNN7EXAMPLE" not in joined, "API key leaked into log"
     assert "[redacted]" in joined
+
+
+# ---------------------------------------------------------------------------
+# Manual holdings primary source (overrides broker fallback)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def tmp_manual_store(tmp_path, monkeypatch):
+    target = tmp_path / "portfolio.json"
+    monkeypatch.setenv("VIBE_TRADING_PORTFOLIO_PATH", str(target))
+    yield target
+
+
+def test_route_uses_manual_store_when_populated(monkeypatch, tmp_manual_store):
+    """When manual holdings exist, the route returns them without hitting any broker."""
+    from src.portfolio.manual_holdings import set_holding
+
+    set_holding("AAPL", quantity=100, average_cost=150.0, name="Apple Inc.")
+    set_holding("TSLA", quantity=50, average_cost=220.0)
+
+    # The broker path must NOT be called when the manual store has rows.
+    def _broker_should_not_run(*a, **kw):
+        raise AssertionError("broker get_positions called when manual store is populated")
+
+    import src.api.portfolio_routes as pr
+    monkeypatch.setattr(pr.trading_service, "get_positions", _broker_should_not_run)
+    monkeypatch.setattr(pr.trading_service, "get_account", _broker_should_not_run)
+
+    # Stub the price feed to keep the test offline.
+    def _fake_prices(symbols, **kw):
+        return {"AAPL": 175.5, "TSLA": 245.0}
+    monkeypatch.setattr(pr, "_fetch_spot_prices", _fake_prices)
+
+    with _client() as c:
+        r = c.get("/portfolio/holdings")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["connected"] is True
+    assert body["profile"] == "manual"
+    syms = sorted(h["symbol"] for h in body["holdings"])
+    assert syms == ["AAPL", "TSLA"]
+    aapl = next(h for h in body["holdings"] if h["symbol"] == "AAPL")
+    assert aapl["quantity"] == 100.0
+    assert aapl["average_cost"] == 150.0
+    assert aapl["current_price"] == 175.5
+    # market_value = 175.5 * 100 = 17550
+    assert aapl["market_value"] == pytest.approx(17550.0, abs=0.01)
+    # pnl = (175.5 - 150) * 100 = 2550
+    assert aapl["unrealized_pnl"] == pytest.approx(2550.0, abs=0.01)
+    assert aapl["pnl_percent"] == pytest.approx(17.0, abs=0.01)
+
+
+def test_route_manual_store_missing_price_degrades_gracefully(monkeypatch, tmp_manual_store):
+    """When the price feed has no data for a symbol, current_price/PnL are None."""
+    from src.portfolio.manual_holdings import set_holding
+
+    set_holding("UNKNOWN", quantity=10, average_cost=50.0)
+
+    import src.api.portfolio_routes as pr
+    monkeypatch.setattr(pr, "_fetch_spot_prices", lambda symbols, **kw: {})
+
+    with _client() as c:
+        r = c.get("/portfolio/holdings")
+    body = r.json()
+    assert body["connected"] is True
+    assert body["holdings"][0]["current_price"] is None
+    assert body["holdings"][0]["pnl_percent"] is None
+
+
+def test_route_falls_back_to_broker_when_manual_empty(monkeypatch, tmp_manual_store):
+    """No manual holdings + connected broker -> broker rows are used."""
+    monkeypatch_positions(monkeypatch, _alpaca_row(), cash=1000.0)
+
+    with _client() as c:
+        r = c.get("/portfolio/holdings")
+    body = r.json()
+    assert body["connected"] is True
+    assert body["profile"] == "alpaca-paper"  # broker, not "manual"
+    assert body["holdings"][0]["symbol"] == "AAPL"
+
+
+# ---------------------------------------------------------------------------
+# CRUD routes for the Settings page
+# ---------------------------------------------------------------------------
+
+def test_put_holding_creates_or_updates(tmp_manual_store):
+    with _client() as c:
+        r = c.put("/portfolio/holdings/AAPL", json={
+            "quantity": 100, "average_cost": 150.0, "name": "Apple"})
+    assert r.status_code == 200
+    assert r.json()["holding"]["symbol"] == "AAPL"
+
+    from src.portfolio.manual_holdings import list_holdings
+    assert len(list_holdings()) == 1
+
+
+def test_delete_holding(tmp_manual_store):
+    from src.portfolio.manual_holdings import set_holding
+    set_holding("AAPL", quantity=100, average_cost=150.0)
+
+    with _client() as c:
+        r = c.delete("/portfolio/holdings/AAPL")
+    assert r.status_code == 200
+
+    from src.portfolio.manual_holdings import list_holdings
+    assert list_holdings() == []
+
+
+def test_replace_all_holdings(tmp_manual_store):
+    with _client() as c:
+        r = c.post("/portfolio/holdings/replace", json={
+            "holdings": [
+                {"symbol": "AAPL", "quantity": 100, "average_cost": 150.0, "name": "Apple"},
+                {"symbol": "TSLA", "quantity": 50, "average_cost": 220.0, "name": "Tesla"},
+            ]
+        })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] == 2
+
+    from src.portfolio.manual_holdings import list_holdings
+    syms = sorted(h.symbol for h in list_holdings())
+    assert syms == ["AAPL", "TSLA"]
+
+
+def test_put_holding_validates_quantity(tmp_manual_store):
+    with _client() as c:
+        r = c.put("/portfolio/holdings/AAPL", json={
+            "quantity": -1, "average_cost": 150.0})
+    assert r.status_code == 400
