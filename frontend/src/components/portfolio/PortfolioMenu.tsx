@@ -196,9 +196,21 @@ export function PortfolioMenu({ collapsed }: { collapsed: boolean }) {
                 </>
               ) : (
                 <div className="px-3 py-6 text-center">
-                  <p className="text-xs text-muted-foreground mb-2">{t("portfolio.disconnected")}</p>
-                  <Link to="/settings" onClick={() => setOpen(false)} className="text-xs text-primary hover:underline">
-                    {t("portfolio.connectCta")}
+                  <p className="text-xs text-muted-foreground mb-3">{t("portfolio.noHoldings")}</p>
+                  <Link to="/portfolio" onClick={() => setOpen(false)} className="text-xs text-primary hover:underline">
+                    {t("portfolio.openManager")}
+                  </Link>
+                </div>
+              )}
+              {/* Always-on manage link footer when ready+connected */}
+              {data.connected && (
+                <div className="border-t px-3 py-2 text-center">
+                  <Link
+                    to="/portfolio"
+                    onClick={() => setOpen(false)}
+                    className="text-xs text-muted-foreground hover:text-primary hover:underline"
+                  >
+                    {t("portfolio.openManager")} →
                   </Link>
                 </div>
               )}

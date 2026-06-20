@@ -526,7 +526,7 @@
     "somethingWrong": "出了点问题"
   },
   "portfolio": {
-    "title": "持仓",
+    "title": "管理持仓",
     "refresh": "刷新",
     "totalValue": "总市值",
     "cost": "成本",
@@ -539,6 +539,25 @@
     "disconnected": "未连接券商",
     "connectCta": "连接券商 →",
     "error": "加载持仓失败",
-    "retry": "重试"
+    "retry": "重试",
+    "subtitle": "添加、编辑或删除手动持仓。改动会立即保存到 ~/.vibe-trading/portfolio.json。",
+    "tableSymbol": "代码",
+    "tableName": "名称",
+    "tableQuantity": "数量",
+    "tableAvgCost": "成本价",
+    "tableActions": "",
+    "addRow": "+ 添加持仓",
+    "saveRow": "保存",
+    "deleteRow": "删除",
+    "saveAll": "保存全部",
+    "discardChanges": "放弃修改",
+    "noHoldings": "暂无持仓。点击「+ 添加持仓」或让 agent 导入券商 CSV。",
+    "saved": "已保存。",
+    "saveFailed": "保存失败",
+    "confirmDelete": "确定从持仓中删除 {symbol}？",
+    "openManager": "管理持仓",
+    "symbolRequired": "代码不能为空",
+    "qtyMustBePositive": "数量必须大于 0",
+    "costNonNegative": "成本价不能小于 0"
   }
 }

@@ -72,15 +72,15 @@ describe("PortfolioMenu", () => {
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
   });
 
-  it("shows disconnected CTA when connected=false", async () => {
+  it("shows manage-portfolio CTA when connected=false (no holdings yet)", async () => {
     vi.mocked(api.getPortfolioHoldings).mockResolvedValue({
       connected: false, profile: null, is_paper: null, holdings: [],
       summary: { market_value: 0, cost_basis: 0, unrealized_pnl: 0, pnl_percent: null, cash: null },
-      error: "not connected",
+      error: "no holdings yet",
     });
     renderMenu();
     fireEvent.click(screen.getByRole("button", { name: /portfolio/i }));
-    await waitFor(() => expect(screen.getByText(/connect a broker/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/manage holdings/i)).toBeInTheDocument());
   });
 
   it("shows empty state when connected with no holdings", async () => {

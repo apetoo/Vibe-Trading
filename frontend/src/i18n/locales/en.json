@@ -526,7 +526,7 @@
     "somethingWrong": "Something went wrong"
   },
   "portfolio": {
-    "title": "Portfolio",
+    "title": "Manage Portfolio",
     "refresh": "Refresh",
     "totalValue": "Total Value",
     "cost": "Cost",
@@ -539,6 +539,25 @@
     "disconnected": "Broker not connected",
     "connectCta": "Connect a broker →",
     "error": "Failed to load positions",
-    "retry": "Retry"
+    "retry": "Retry",
+    "subtitle": "Add, edit, or remove your manual holdings. Changes save instantly to ~/.vibe-trading/portfolio.json.",
+    "tableSymbol": "Symbol",
+    "tableName": "Name",
+    "tableQuantity": "Quantity",
+    "tableAvgCost": "Average Cost",
+    "tableActions": "",
+    "addRow": "+ Add holding",
+    "saveRow": "Save",
+    "deleteRow": "Delete",
+    "saveAll": "Save all",
+    "discardChanges": "Discard changes",
+    "noHoldings": "No holdings yet. Click '+ Add holding' or import a broker CSV via the agent.",
+    "saved": "Saved.",
+    "saveFailed": "Save failed",
+    "confirmDelete": "Remove {symbol} from your portfolio?",
+    "openManager": "Manage holdings",
+    "symbolRequired": "Symbol is required",
+    "qtyMustBePositive": "Quantity must be > 0",
+    "costNonNegative": "Average cost must be >= 0"
   }
 }

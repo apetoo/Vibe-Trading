@@ -119,6 +119,21 @@ export const api = {
     if (force) url = appendQueryParam(url, "force", "1");
     return request<PortfolioHoldings>(url);
   },
+  upsertHolding: (symbol: string, body: { quantity: number; average_cost: number; name?: string }) =>
+    request<{ status: string; holding: Holding | null }>(
+      `/portfolio/holdings/${encodeURIComponent(symbol)}`,
+      { method: "PUT", body: JSON.stringify(body) },
+    ),
+  deleteHolding: (symbol: string) =>
+    request<{ status: string }>(
+      `/portfolio/holdings/${encodeURIComponent(symbol)}`,
+      { method: "DELETE" },
+    ),
+  replaceHoldings: (holdings: { symbol: string; quantity: number; average_cost: number; name?: string }[]) =>
+    request<{ status: string; count: number }>("/portfolio/holdings/replace", {
+      method: "POST",
+      body: JSON.stringify({ holdings }),
+    }),
   createSession: (title?: string) => request<SessionItem>("/sessions", { method: "POST", body: JSON.stringify({ title: title || "" }) }),
   deleteSession: (sid: string) => request<{ status: string }>(`/sessions/${sid}`, { method: "DELETE" }),
   renameSession: (sid: string, title: string) => request<{ status: string }>(`/sessions/${sid}`, { method: "PATCH", body: JSON.stringify({ title }) }),
