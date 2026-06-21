@@ -129,6 +129,14 @@ def _clear_cache():
     _positions_cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_manual_store(tmp_path, monkeypatch):
+    """Ensure portfolio.json is a temp file so no real data leaks in."""
+    target = tmp_path / "portfolio.json"
+    monkeypatch.setenv("VIBE_TRADING_PORTFOLIO_PATH", str(target))
+    yield
+
+
 def _positions_payload(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {"status": "ok", "profile": "alpaca-paper", "is_paper": True, "positions": rows}
 
