@@ -12,7 +12,6 @@ const PROXY_PATHS = [
   "/live",
   "/upload",
   "/shadow-reports",
-  "/portfolio",
 ];
 
 export default defineConfig(({ mode }) => {
@@ -45,6 +44,9 @@ export default defineConfig(({ mode }) => {
         "/runs": apiProxy,
         "/correlation": apiProxyWithHtmlFallback,
         "^/alpha(?:/|$)": apiProxy,
+        // Portfolio backend API: only proxy paths under /portfolio/holdings*
+        // (not bare /portfolio, which is the SPA management page).
+        "/portfolio/holdings": apiProxy,
       },
     },
     build: {
