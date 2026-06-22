@@ -43,6 +43,10 @@ export default defineConfig(({ mode }) => {
         "^/runs/[^/]+/?$": apiProxyWithHtmlFallback,
         "/runs": apiProxy,
         "/correlation": apiProxyWithHtmlFallback,
+        // SPA IndustryChain page — browser navigation (Accept: text/html)
+        // falls back to index.html; JSON API requests under /industry-chain/*
+        // keep proxying to the backend.
+        "/industry-chain": apiProxyWithHtmlFallback,
         "^/alpha(?:/|$)": apiProxy,
         // Portfolio backend API: only proxy paths under /portfolio/holdings*
         // (not bare /portfolio, which is the SPA management page).

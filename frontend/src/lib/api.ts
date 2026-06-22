@@ -1,4 +1,15 @@
 import { authHeaders, withAuthQuery } from "@/lib/apiAuth";
+import type {
+  IndustryChainTreeResponse,
+  IndustryNodeCreate,
+  IndustryNodeUpdate,
+  IndustryNodeResponse,
+  IndustryNodeDetailResponse,
+  IndustryRelationCreate,
+  IndustryRelationResponse,
+  PendingReviewsResponse,
+  IndustryChainStats,
+} from "@/types/industryChain";
 
 const BASE = "";
 
@@ -102,7 +113,7 @@ function appendQueryParam(url: string, key: string, value: string): string {
 
 export const api = {
   uploadFile,
-  listRuns: () => request<RunListItem[]>("/runs"),
+  listRuns: (limit?: number) => request<RunListItem[]>(`/runs${limit ? `?limit=${encodeURIComponent(String(limit))}` : ""}`),
   getRun: (id: string, params: RunDetailParams = {}) => {
     const q = new URLSearchParams();
     if (params.chart_payload) q.set("chart_payload", params.chart_payload);
@@ -252,6 +263,63 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ broker }),
     }),
+
+  // ── Industry Chain ──────────────────────────────────────────
+
+  /** Fetch the full industry chain tree */
+  getIndustryChainTree: () =>
+    request<IndustryChainTreeResponse>('/industry-chain/tree'),
+
+  /** Fetch full detail (rich fields + sources) for one node */
+  getIndustryNodeDetail: (id: string) =>
+    request<IndustryNodeDetailResponse>(`/industry-chain/nodes/${id}`),
+
+  /** Fetch pending reviews */
+  getPendingReviews: () =>
+    request<PendingReviewsResponse>('/industry-chain/reviews'),
+
+  /** Add a new node */
+  addIndustryNode: (data: IndustryNodeCreate) =>
+    request<IndustryNodeResponse>('/industry-chain/nodes', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  /** Update an existing node */
+  updateIndustryNode: (id: string, data: IndustryNodeUpdate) =>
+    request<IndustryNodeResponse>(`/industry-chain/nodes/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  /** Delete a node */
+  deleteIndustryNode: (id: string) =>
+    request<{ success: boolean }>(`/industry-chain/nodes/${id}`, {
+      method: 'DELETE',
+    }),
+
+  /** Add a relation between nodes */
+  addIndustryRelation: (data: IndustryRelationCreate) =>
+    request<IndustryRelationResponse>('/industry-chain/relations', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  /** Approve a pending review */
+  approveReview: (id: string) =>
+    request<{ success: boolean }>(`/industry-chain/reviews/${id}/approve`, {
+      method: 'POST',
+    }),
+
+  /** Reject a pending review */
+  rejectReview: (id: string) =>
+    request<{ success: boolean }>(`/industry-chain/reviews/${id}/reject`, {
+      method: 'POST',
+    }),
+
+  /** Get industry chain statistics */
+  getIndustryChainStats: () =>
+    request<IndustryChainStats>('/industry-chain/stats'),
 };
 
 // --- Swarm types ---
