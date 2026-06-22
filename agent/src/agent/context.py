@@ -229,6 +229,39 @@ class ContextBuilder:
             except Exception as exc:
                 logger.debug("Auto-recall failed: %s", exc)
 
+        # Auto-inject: detect stock codes and inject industry chain context
+        # (mirrors recalled-memories try/except pattern)
+        if not enriched.startswith("<industry-chain-context>"):  # avoid double-inject
+            try:
+                import re as _re
+                from src.industry_chain.store import IndustryChainStore as _ICStore
+                _code_match = _re.findall(r'\b(\d{6}\.(?:SH|SZ|BJ))\b', enriched)
+                if _code_match:
+                    _ic_store = _ICStore()
+                    _code_idx = _ic_store.get_node_code_index()
+                    for _code in _code_match:
+                        if _code in _code_idx:
+                            _ctx = _ic_store.get_stock_context(_code)
+                            if _ctx:
+                                _ctx_lines = [
+                                    "<industry-chain-context>",
+                                    f"Stock: {_ctx['stock_name']} ({_ctx['stock_code']})",
+                                    f"Chain: {' → '.join(p['name'] for p in _ctx['path'])}",
+                                ]
+                                if _ctx.get('stock_summary'):
+                                    _ctx_lines.append(f"Summary: {_ctx['stock_summary']}")
+                                if _ctx.get('competitors'):
+                                    _ctx_lines.append(f"Competitors: {', '.join(c['name'] for c in _ctx['competitors'])}")
+                                if _ctx.get('market_size'):
+                                    _ctx_lines.append(f"Market size: {_ctx['market_size']}")
+                                if _ctx.get('localization'):
+                                    _ctx_lines.append(f"Localization rate: {_ctx['localization']}")
+                                _ctx_lines.append("</industry-chain-context>\n")
+                                enriched = "\n".join(_ctx_lines) + enriched
+                                break
+            except Exception:
+                pass  # Silent fallback (F1)
+
         messages.append({"role": "user", "content": enriched})
         return messages
 
