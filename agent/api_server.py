@@ -3276,6 +3276,14 @@ register_alpha_routes(app)
 
 
 # ============================================================================
+# Industry chain routes (Web UI) — defined in src/api/industry_chain_routes.py
+# ============================================================================
+
+from src.api.industry_chain_routes import register_industry_chain_routes  # noqa: E402
+register_industry_chain_routes(app)
+
+
+# ============================================================================
 # Scheduled Research Routes
 # ============================================================================
 #
