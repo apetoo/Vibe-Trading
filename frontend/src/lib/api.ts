@@ -4,6 +4,7 @@ import type {
   IndustryNodeCreate,
   IndustryNodeUpdate,
   IndustryNodeResponse,
+  IndustryNodeDetailResponse,
   IndustryRelationCreate,
   IndustryRelationResponse,
   PendingReviewsResponse,
@@ -218,6 +219,10 @@ export const api = {
   /** Fetch the full industry chain tree */
   getIndustryChainTree: () =>
     request<IndustryChainTreeResponse>('/industry-chain/tree'),
+
+  /** Fetch full detail (rich fields + sources) for one node */
+  getIndustryNodeDetail: (id: string) =>
+    request<IndustryNodeDetailResponse>(`/industry-chain/nodes/${id}`),
 
   /** Fetch pending reviews */
   getPendingReviews: () =>

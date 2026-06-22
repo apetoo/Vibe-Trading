@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Network, Plus, Edit3, Check, X, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
+import { Network, Plus, Edit3, Check, X, ChevronDown, ChevronRight, Loader2, ExternalLink, FileText } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
-import type { IndustryNode, IndustryNodeCreate, IndustryNodeUpdate, PendingReview } from '../types/industryChain';
+import type {
+  IndustryNode,
+  IndustryNodeCreate,
+  IndustryNodeUpdate,
+  IndustryNodeFields,
+  IndustryNodeDetailResponse,
+  PendingReview,
+} from '../types/industryChain';
 
 // ─── Helpers ───────────────────────────────────────────────────────
 
@@ -18,6 +25,22 @@ function findNode(nodes: IndustryNode[], id: string): IndustryNode | undefined {
 function getChildren(nodes: IndustryNode[], parentId: string | null): IndustryNode[] {
   return nodes.filter((n) => n.parent_id === parentId);
 }
+
+/** Pretty-print a JSON field for read-only display */
+function prettyJson(v: unknown): string {
+  try {
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return String(v ?? '');
+  }
+}
+
+const SOURCE_TYPE_LABELS: Record<string, string> = {
+  annual_report: '年报',
+  prospectus: '招股书',
+  exchange_announcement: '交易所公告',
+  broker_report: '券商研报',
+};
 
 // ─── Node Tree Sub-component ───────────────────────────────────────
 
@@ -92,6 +115,305 @@ function TreeNode({
   );
 }
 
+// ─── Read-only field row helpers ───────────────────────────────────
+
+function FieldRow({ label, value }: { label: string; value: string }) {
+  if (!value) return null;
+  return (
+    <div className="grid grid-cols-[120px_1fr] gap-2 py-1.5 text-sm">
+      <span className="text-xs font-medium text-muted-foreground pt-0.5">{label}</span>
+      <span className="whitespace-pre-wrap leading-relaxed">{value}</span>
+    </div>
+  );
+}
+
+function JsonBlock({ label, value }: { label: string; value: unknown }) {
+  if (!value || (typeof value === 'object' && Object.keys(value as object).length === 0)) return null;
+  return (
+    <div className="py-1.5">
+      <div className="text-xs font-medium text-muted-foreground mb-1">{label}</div>
+      <pre className="text-xs bg-muted/50 dark:bg-muted/30 rounded-md p-3 overflow-x-auto whitespace-pre-wrap leading-relaxed">
+        {prettyJson(value)}
+      </pre>
+    </div>
+  );
+}
+
+function DetailView({ detail }: { detail: IndustryNodeDetailResponse }) {
+  const { t } = useTranslation();
+  const f = detail.fields;
+  const isCompany = detail.node.type === 'company';
+  const validationLabels: Record<string, string> = {
+    unverified: t('industryChain.validationUnverified'),
+    verified: t('industryChain.validationVerified'),
+    pending: t('industryChain.validationPending'),
+  };
+
+  const hasMarket =
+    !!(f?.market_size || f?.growth_rate || f?.chain_position || f?.localization || f?.gross_margin);
+  const hasStock = !!(
+    f?.financials && Object.keys(f.financials).length > 0
+  ) || !!(f?.operating_metrics && Object.keys(f.operating_metrics).length > 0) ||
+    !!(f?.customer_structure && Object.keys(f.customer_structure).length > 0);
+
+  return (
+    <div className="space-y-5">
+      {/* Validation badge */}
+      {f?.validation_status && (
+        <div className="flex items-center gap-2">
+          <span className={`text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded ${
+            f.validation_status === 'verified'
+              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+              : f.validation_status === 'pending'
+                ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                : 'bg-muted text-muted-foreground'
+          }`}>
+            {validationLabels[f.validation_status] ?? f.validation_status}
+          </span>
+          {detail.snapshot_at && (
+            <span className="text-xs text-muted-foreground">
+              {new Date(detail.snapshot_at).toLocaleDateString()}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Overview */}
+      {(f?.summary || f?.narrative) && (
+        <section>
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+            {t('industryChain.sectionOverview')}
+          </h3>
+          {f?.summary && <p className="text-sm font-medium mb-2">{f.summary}</p>}
+          {f?.narrative && <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">{f.narrative}</p>}
+        </section>
+      )}
+
+      {/* Market & position */}
+      {hasMarket && (
+        <section>
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+            {t('industryChain.sectionMarket')}
+          </h3>
+          <div className="divide-y divide-border/60">
+            <FieldRow label={t('industryChain.fieldMarketSize')} value={f?.market_size ?? ''} />
+            <FieldRow label={t('industryChain.fieldGrowthRate')} value={f?.growth_rate ?? ''} />
+            <FieldRow label={t('industryChain.fieldChainPosition')} value={f?.chain_position ?? ''} />
+            <FieldRow label={t('industryChain.fieldLocalization')} value={f?.localization ?? ''} />
+            <FieldRow label={t('industryChain.fieldGrossMargin')} value={f?.gross_margin ?? ''} />
+          </div>
+        </section>
+      )}
+
+      {/* Tech trend */}
+      {f?.tech_trend && (
+        <section>
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+            {t('industryChain.sectionTech')}
+          </h3>
+          <p className="text-sm whitespace-pre-wrap leading-relaxed">{f.tech_trend}</p>
+        </section>
+      )}
+
+      {/* Macro drivers */}
+      {f?.macro_drivers && f.macro_drivers.length > 0 && (
+        <section>
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+            {t('industryChain.sectionMacro')}
+          </h3>
+          <ul className="space-y-1.5">
+            {f.macro_drivers.map((d, i) => (
+              <li key={i} className="text-sm flex gap-2">
+                <span className="text-primary shrink-0">•</span>
+                <span className="leading-relaxed">{d}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {/* Stock-only fundamentals */}
+      {isCompany && hasStock && (
+        <section>
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+            {t('industryChain.sectionStock')}
+          </h3>
+          <div className="space-y-2">
+            <JsonBlock label={t('industryChain.fieldFinancials')} value={f?.financials} />
+            <JsonBlock label={t('industryChain.fieldOperatingMetrics')} value={f?.operating_metrics} />
+            <JsonBlock label={t('industryChain.fieldCustomerStructure')} value={f?.customer_structure} />
+          </div>
+        </section>
+      )}
+
+      {/* Sources */}
+      {detail.sources.length > 0 && (
+        <section>
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+            {t('industryChain.sectionSources')} ({detail.sources.length})
+          </h3>
+          <div className="space-y-2">
+            {detail.sources.map((s, i) => (
+              <div key={i} className="flex items-start gap-2 p-2 rounded-md bg-muted/40 dark:bg-muted/20">
+                <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                      {SOURCE_TYPE_LABELS[s.source_type] ?? s.source_type}
+                    </span>
+                    {s.title && <span className="text-sm font-medium">{s.title}</span>}
+                    {s.publisher && <span className="text-xs text-muted-foreground">{s.publisher}</span>}
+                    {s.published_date && <span className="text-xs text-muted-foreground">{s.published_date}</span>}
+                  </div>
+                  {s.cited_text && (
+                    <p className="text-xs text-muted-foreground mt-1 italic line-clamp-2">{s.cited_text}</p>
+                  )}
+                  {s.url && (
+                    <a href={s.url} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline mt-1 inline-flex items-center gap-0.5">
+                      <ExternalLink className="h-3 w-3" />
+                      {t('industryChain.viewSource')}
+                    </a>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+// ─── Edit form for rich fields ─────────────────────────────────────
+
+function RichFieldsEditor({
+  fields,
+  onChange,
+}: {
+  fields: IndustryNodeFields;
+  onChange: (next: IndustryNodeFields) => void;
+}) {
+  const { t } = useTranslation();
+  const set = (patch: Partial<IndustryNodeFields>) => onChange({ ...fields, ...patch });
+
+  const macroText = Array.isArray(fields.macro_drivers)
+    ? fields.macro_drivers.join('\n')
+    : (fields.macro_drivers as unknown as string) ?? '';
+
+  const [finText, setFinText] = useState('');
+  const [opText, setOpText] = useState('');
+  const [custText, setCustText] = useState('');
+  const [jsonError, setJsonError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setFinText(prettyJson(fields.financials));
+    setOpText(prettyJson(fields.operating_metrics));
+    setCustText(prettyJson(fields.customer_structure));
+    setJsonError(null);
+  }, [fields.financials, fields.operating_metrics, fields.customer_structure]);
+
+  const syncJson = (which: 'financials' | 'operating_metrics' | 'customer_structure', text: string) => {
+    if (which === 'financials') setFinText(text);
+    if (which === 'operating_metrics') setOpText(text);
+    if (which === 'customer_structure') setCustText(text);
+    if (!text.trim()) {
+      set({ [which]: {} } as Partial<IndustryNodeFields>);
+      setJsonError(null);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(text);
+      set({ [which]: parsed } as Partial<IndustryNodeFields>);
+      setJsonError(null);
+    } catch {
+      setJsonError(`${which}: ${t('industryChain.jsonInvalid')}`);
+    }
+  };
+
+  const textCls = 'w-full min-h-[60px] px-3 py-2 rounded-md border border-input bg-background text-sm resize-y';
+  const labelCls = 'block text-xs font-medium text-muted-foreground mb-1';
+
+  return (
+    <div className="space-y-3">
+      <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+        {t('industryChain.editRichFields')}
+      </h4>
+
+      <div>
+        <label className={labelCls}>{t('industryChain.fieldNarrative')}</label>
+        <textarea className={textCls} value={fields.narrative ?? ''} onChange={(e) => set({ narrative: e.target.value })} />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className={labelCls}>{t('industryChain.fieldMarketSize')}</label>
+          <textarea className={textCls} value={fields.market_size ?? ''} onChange={(e) => set({ market_size: e.target.value })} />
+        </div>
+        <div>
+          <label className={labelCls}>{t('industryChain.fieldGrowthRate')}</label>
+          <textarea className={textCls} value={fields.growth_rate ?? ''} onChange={(e) => set({ growth_rate: e.target.value })} />
+        </div>
+        <div>
+          <label className={labelCls}>{t('industryChain.fieldChainPosition')}</label>
+          <textarea className={textCls} value={fields.chain_position ?? ''} onChange={(e) => set({ chain_position: e.target.value })} />
+        </div>
+        <div>
+          <label className={labelCls}>{t('industryChain.fieldLocalization')}</label>
+          <textarea className={textCls} value={fields.localization ?? ''} onChange={(e) => set({ localization: e.target.value })} />
+        </div>
+        <div>
+          <label className={labelCls}>{t('industryChain.fieldGrossMargin')}</label>
+          <textarea className={textCls} value={fields.gross_margin ?? ''} onChange={(e) => set({ gross_margin: e.target.value })} />
+        </div>
+        <div>
+          <label className={labelCls}>{t('industryChain.fieldValidationStatus')}</label>
+          <select
+            className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
+            value={fields.validation_status ?? 'unverified'}
+            onChange={(e) => set({ validation_status: e.target.value })}
+          >
+            <option value="unverified">{t('industryChain.validationUnverified')}</option>
+            <option value="verified">{t('industryChain.validationVerified')}</option>
+            <option value="pending">{t('industryChain.validationPending')}</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label className={labelCls}>{t('industryChain.fieldTechTrend')}</label>
+        <textarea className={textCls} value={fields.tech_trend ?? ''} onChange={(e) => set({ tech_trend: e.target.value })} />
+      </div>
+
+      <div>
+        <label className={labelCls}>{t('industryChain.fieldMacroDrivers')}</label>
+        <textarea
+          className={textCls}
+          placeholder={t('industryChain.macroDriversPlaceholder')}
+          value={macroText}
+          onChange={(e) => set({ macro_drivers: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean) })}
+        />
+      </div>
+
+      <div>
+        <label className={labelCls}>{t('industryChain.fieldFinancials')}</label>
+        <textarea className={`${textCls} font-mono text-xs`} value={finText} onChange={(e) => syncJson('financials', e.target.value)} />
+      </div>
+      <div>
+        <label className={labelCls}>{t('industryChain.fieldOperatingMetrics')}</label>
+        <textarea className={`${textCls} font-mono text-xs`} value={opText} onChange={(e) => syncJson('operating_metrics', e.target.value)} />
+      </div>
+      <div>
+        <label className={labelCls}>{t('industryChain.fieldCustomerStructure')}</label>
+        <textarea className={`${textCls} font-mono text-xs`} value={custText} onChange={(e) => syncJson('customer_structure', e.target.value)} />
+      </div>
+
+      {jsonError && (
+        <p className="text-xs text-destructive">{jsonError}</p>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Page ─────────────────────────────────────────────────────
 
 export default function IndustryChain() {
@@ -104,11 +426,17 @@ export default function IndustryChain() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Detail state
+  const [detail, setDetail] = useState<IndustryNodeDetailResponse | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
   // Editor state
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState('');
   const [editType, setEditType] = useState<IndustryNode['type']>('unknown');
   const [editDescription, setEditDescription] = useState('');
+  const [editFields, setEditFields] = useState<IndustryNodeFields>({});
+  const [editJsonError, setEditJsonError] = useState<string | null>(null);
 
   // New node form state
   const [showAddForm, setShowAddForm] = useState(false);
@@ -152,6 +480,19 @@ export default function IndustryChain() {
     }
   }, []);
 
+  const fetchDetail = useCallback(async (id: string) => {
+    try {
+      setDetailLoading(true);
+      const d = await api.getIndustryNodeDetail(id);
+      setDetail(d);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load node detail');
+      setDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchTree();
     fetchReviews();
@@ -171,7 +512,8 @@ export default function IndustryChain() {
       setEditType(node.type);
       setEditDescription(node.description ?? '');
     }
-  }, [nodes]);
+    fetchDetail(id);
+  }, [nodes, fetchDetail]);
 
   const handleToggle = useCallback((id: string) => {
     setExpandedIds((prev) => {
@@ -182,19 +524,32 @@ export default function IndustryChain() {
     });
   }, []);
 
+  const startEditing = () => {
+    if (!detail) return;
+    setEditFields({ ...detail.fields });
+    setEditJsonError(null);
+    setEditing(true);
+  };
+
   // ─── CRUD operations ────────────────────────────────────────────
 
   const handleSaveEdit = async () => {
     if (!selectedId) return;
+    if (editJsonError) {
+      setError(editJsonError);
+      return;
+    }
     try {
       const update: IndustryNodeUpdate = {
         name: editName,
         type: editType,
         description: editDescription || undefined,
+        fields: editFields,
       };
       await api.updateIndustryNode(selectedId, update);
       setEditing(false);
       await fetchTree();
+      await fetchDetail(selectedId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update node');
     }
@@ -230,6 +585,7 @@ export default function IndustryChain() {
     try {
       await api.deleteIndustryNode(selectedId);
       setSelectedId(null);
+      setDetail(null);
       await fetchTree();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete node');
@@ -438,8 +794,11 @@ export default function IndustryChain() {
                           {selectedNode.type}
                         </span>
                         <h2 className="text-lg font-semibold">{selectedNode.name}</h2>
+                        {detail?.node.code && (
+                          <span className="text-xs text-muted-foreground font-mono">{detail.node.code}</span>
+                        )}
                       </div>
-                      {selectedNode.description && (
+                      {selectedNode.description && !editing && (
                         <p className="mt-1 text-sm text-muted-foreground">{selectedNode.description}</p>
                       )}
                     </div>
@@ -447,7 +806,8 @@ export default function IndustryChain() {
                       {!editing && (
                         <button
                           className="inline-flex items-center gap-1 h-8 px-3 rounded-md border border-input bg-background text-sm hover:bg-accent"
-                          onClick={() => setEditing(true)}
+                          onClick={startEditing}
+                          disabled={!detail}
                         >
                           <Edit3 className="h-3.5 w-3.5" />
                           {t('common.edit')}
@@ -494,18 +854,28 @@ export default function IndustryChain() {
                         </div>
                         <div>
                           <label className="block text-xs font-medium text-muted-foreground mb-1">
-                            {t('industryChain.descriptionLabel')}
+                            {t('industryChain.fieldSummary')}
                           </label>
                           <textarea
-                            className="w-full min-h-[60px] px-3 py-2 rounded-md border border-input bg-background text-sm resize-y"
+                            className="w-full min-h-[40px] px-3 py-2 rounded-md border border-input bg-background text-sm resize-y"
                             value={editDescription}
                             onChange={(e) => setEditDescription(e.target.value)}
                           />
                         </div>
-                        <div className="flex gap-2">
+
+                        <RichFieldsEditor
+                          fields={editFields}
+                          onChange={(next) => {
+                            setEditFields(next);
+                            setEditJsonError(null);
+                          }}
+                        />
+
+                        <div className="flex gap-2 pt-2 border-t">
                           <button
-                            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90"
+                            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
                             onClick={handleSaveEdit}
+                            disabled={!!editJsonError}
                           >
                             <Check className="h-4 w-4" />
                             {t('common.save')}
@@ -521,12 +891,26 @@ export default function IndustryChain() {
                     </section>
                   )}
 
+                  {/* Detail view (read-only) */}
+                  {!editing && (
+                    detailLoading ? (
+                      <div className="flex items-center justify-center py-12 text-muted-foreground">
+                        <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                        {t('common.loading')}
+                      </div>
+                    ) : detail ? (
+                      <DetailView detail={detail} />
+                    ) : (
+                      <p className="text-sm text-muted-foreground">{t('industryChain.noDetail')}</p>
+                    )
+                  )}
+
                   {/* Node children list */}
                   {(() => {
                     const childNodes = getChildren(nodes, selectedNode.id);
                     if (childNodes.length === 0) return null;
                     return (
-                      <section>
+                      <section className="mt-6 pt-4 border-t">
                         <h3 className="text-sm font-semibold mb-2">{t('industryChain.children')} ({childNodes.length})</h3>
                         <div className="space-y-1">
                           {childNodes.map((child) => (

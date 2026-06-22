@@ -12,6 +12,8 @@ export interface IndustryNode {
   parent_id: string | null;
   /** Description of this node */
   description?: string;
+  /** Stock/ticker code (company nodes) */
+  code?: string;
   /** Child node IDs */
   children?: string[];
   /** Additional metadata */
@@ -43,7 +45,48 @@ export interface IndustryNodeUpdate {
   type?: IndustryNode['type'];
   parent_id?: string | null;
   description?: string;
+  fields?: IndustryNodeFields;
   metadata?: Record<string, unknown>;
+}
+
+/** Rich fields stored on a node version (mirrors backend NodeVersion) */
+export interface IndustryNodeFields {
+  summary?: string;
+  narrative?: string;
+  market_size?: string;
+  growth_rate?: string;
+  chain_position?: string;
+  localization?: string;
+  gross_margin?: string;
+  tech_trend?: string;
+  /** Parsed JSON array of macro driver strings */
+  macro_drivers?: string[];
+  /** Parsed JSON object of financial highlights */
+  financials?: Record<string, unknown>;
+  /** Parsed JSON object of operating metrics */
+  operating_metrics?: Record<string, unknown>;
+  /** Parsed JSON object of customer structure */
+  customer_structure?: Record<string, unknown>;
+  validation_status?: string;
+}
+
+/** A source citation attached to a node version */
+export interface IndustryNodeSource {
+  source_type: string;
+  title?: string;
+  publisher?: string;
+  url?: string;
+  published_date?: string;
+  cited_text?: string;
+}
+
+/** Full node detail: node + rich fields + sources + version info */
+export interface IndustryNodeDetailResponse {
+  node: IndustryNode;
+  fields: IndustryNodeFields;
+  sources: IndustryNodeSource[];
+  version_id?: string;
+  snapshot_at?: string;
 }
 
 /** Request body for adding a relation */

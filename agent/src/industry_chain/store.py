@@ -199,6 +199,22 @@ class IndustryChainStore:
         self._conn.commit()
 
     @_synchronized
+    def update_node_meta(self, node_id: str, **fields: str | None) -> None:
+        """Update node metadata (name, code, sort_order, parent_id)."""
+        allowed = {"name", "code", "sort_order", "parent_id"}
+        updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
+        if not updates:
+            return
+        now = _now_iso()
+        sets = ", ".join(f"{k}=?" for k in updates)
+        values = list(updates.values()) + [now, node_id]
+        self._conn.execute(
+            f"UPDATE nodes SET {sets}, updated_at=? WHERE node_id=?",
+            values,
+        )
+        self._conn.commit()
+
+    @_synchronized
     def list_children(self, parent_id: str) -> list[ChainNode]:
         rows = self._conn.execute(
             "SELECT * FROM nodes WHERE parent_id=? ORDER BY sort_order, name",
