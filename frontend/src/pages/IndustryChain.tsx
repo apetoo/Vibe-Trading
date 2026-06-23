@@ -210,50 +210,60 @@ function DetailView({
       )}
 
       {/* Supply Relations */}
-      {relations.length > 0 ? (
-        <section>
-          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-            {t('industryChain.sectionRelations')}
-          </h3>
-          <div className="divide-y divide-border/60">
-            {relations.map((r) => (
-              <div key={r.relation_id} className="flex items-center justify-between py-1.5">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[10px] uppercase tracking-wider font-semibold px-1 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
-                    {relationTypeLabels[r.relation_type] ?? r.relation_type}
-                  </span>
-                  <span className="text-sm truncate">{r.other_name}</span>
-                  {r.note && (
-                    <span className="text-xs text-muted-foreground truncate hidden sm:inline">— {r.note}</span>
-                  )}
+      <section>
+        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+          {t('industryChain.sectionRelations')}
+        </h3>
+        {relations.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t('industryChain.noRelations')}</p>
+        ) : (
+          (() => {
+            const groupOrder: RelationType[] = ['supplier', 'customer', 'substitute', 'related', 'certified_by', 'segment_of'];
+            const grouped = new Map<RelationType, IndustryRelation[]>();
+            for (const r of relations) {
+              const list = grouped.get(r.relation_type) || [];
+              list.push(r);
+              grouped.set(r.relation_type, list);
+            }
+            return groupOrder.map((type) => {
+              const items = grouped.get(type);
+              if (!items || items.length === 0) return null;
+              return (
+                <div key={type} className="mb-3 last:mb-0">
+                  <h4 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                    {relationTypeLabels[type]}
+                  </h4>
+                  <div className="divide-y divide-border/60">
+                    {items.map((r) => (
+                      <div key={r.relation_id} className="flex items-center justify-between py-1.5">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-sm truncate">{r.other_name}</span>
+                          {r.note && (
+                            <span className="text-xs text-muted-foreground truncate hidden sm:inline">— {r.note}</span>
+                          )}
+                        </div>
+                        {onDeleteRelation && (
+                          <button
+                            className="shrink-0 p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                            onClick={() => {
+                              if (window.confirm(t('industryChain.confirmDeleteRelation'))) {
+                                onDeleteRelation(r.relation_id);
+                              }
+                            }}
+                            title={t('common.delete')}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                {onDeleteRelation && (
-                  <button
-                    className="shrink-0 p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                    onClick={() => {
-                      if (window.confirm(t('industryChain.confirmDeleteRelation'))) {
-                        onDeleteRelation(r.relation_id);
-                      }
-                    }}
-                    title={t('common.delete')}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : (
-        !onDeleteRelation && (
-          <section>
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-              {t('industryChain.sectionRelations')}
-            </h3>
-            <p className="text-sm text-muted-foreground">{t('industryChain.noRelations')}</p>
-          </section>
-        )
-      )}
+              );
+            });
+          })()
+        )}
+      </section>
 
       {/* Market & position */}
       {hasMarket && (
