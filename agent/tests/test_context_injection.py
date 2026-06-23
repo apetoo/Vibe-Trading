@@ -50,7 +50,10 @@ def _fake_graph(*, include_market_size: bool = False) -> dict:
             {"other_id": "e5", "other_name": "共封装光学 vs 板载光学", "other_type": "external",
              "source_id": "stock_abc123", "target_id": "e5", "relation_type": "substitute"},
         ],
-        "related": [],
+        "related": [
+            {"other_id": "e7", "other_name": "AI 算力链", "other_type": "industry",
+             "source_id": "stock_abc123", "target_id": "e7", "relation_type": "related"},
+        ],
         "certified_by": [
             {"other_id": "e6", "other_name": "英伟达", "other_type": "external",
              "source_id": "stock_abc123", "target_id": "e6", "relation_type": "certified_by"},
@@ -175,6 +178,22 @@ class TestStructureInjection:
 
         user_content = messages[-1]["content"]
         assert "Substitutes: 共封装光学 vs 板载光学" in user_content
+
+    def test_related_injected(self):
+        """Related edges use other_name."""
+        builder = _build_context_builder()
+        fake = _fake_graph()
+
+        mock_store = MagicMock()
+        mock_store.get_node_code_index.return_value = {"300308.SZ"}
+        mock_store.get_node_context_graph.return_value = fake
+
+        with patch("src.industry_chain.store.IndustryChainStore",
+                   return_value=mock_store):
+            messages = builder.build_messages("分析 300308.SZ")
+
+        user_content = messages[-1]["content"]
+        assert "Related: AI 算力链" in user_content
 
     def test_empty_categories_not_output(self):
         """Empty categories (related=[]) produce no line."""

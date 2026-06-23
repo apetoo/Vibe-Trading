@@ -260,6 +260,10 @@ class ContextBuilder:
                                     _ctx_lines.append(
                                         f"Substitutes: {', '.join(s['other_name'] for s in _ctx['substitutes'])}"
                                     )
+                                if _ctx.get('related'):
+                                    _ctx_lines.append(
+                                        f"Related: {', '.join(r['other_name'] for r in _ctx['related'])}"
+                                    )
                                 if _ctx.get('competitors'):
                                     _ctx_lines.append(
                                         f"Competitors: {', '.join(c['name'] for c in _ctx['competitors'])}"
