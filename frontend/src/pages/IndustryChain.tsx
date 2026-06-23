@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Network, Plus, Edit3, Check, X, ChevronDown, ChevronRight, Loader2, ExternalLink, FileText } from 'lucide-react';
+import { Network, Plus, Edit3, Check, X, ChevronDown, ChevronRight, Loader2, ExternalLink, FileText, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import type {
@@ -8,6 +8,9 @@ import type {
   IndustryNodeUpdate,
   IndustryNodeFields,
   IndustryNodeDetailResponse,
+  IndustryRelation,
+  IndustryRelationCreate,
+  RelationType,
   PendingReview,
 } from '../types/industryChain';
 
@@ -70,6 +73,7 @@ function TreeNode({
     sector: 'text-emerald-600 dark:text-emerald-400',
     product: 'text-purple-600 dark:text-purple-400',
     company: 'text-amber-600 dark:text-amber-400',
+    external: 'text-orange-600 dark:text-orange-400',
   };
 
   return (
@@ -139,7 +143,15 @@ function JsonBlock({ label, value }: { label: string; value: unknown }) {
   );
 }
 
-function DetailView({ detail }: { detail: IndustryNodeDetailResponse }) {
+function DetailView({
+  detail,
+  relations,
+  onDeleteRelation,
+}: {
+  detail: IndustryNodeDetailResponse;
+  relations: IndustryRelation[];
+  onDeleteRelation?: (relationId: string) => void;
+}) {
   const { t } = useTranslation();
   const f = detail.fields;
   const isCompany = detail.node.type === 'company';
@@ -147,6 +159,14 @@ function DetailView({ detail }: { detail: IndustryNodeDetailResponse }) {
     unverified: t('industryChain.validationUnverified'),
     verified: t('industryChain.validationVerified'),
     pending: t('industryChain.validationPending'),
+  };
+  const relationTypeLabels: Record<string, string> = {
+    supplier: t('industryChain.relUpstream'),
+    customer: t('industryChain.relDownstream'),
+    substitute: t('industryChain.relSubstitute'),
+    related: t('industryChain.relRelated'),
+    certified_by: t('industryChain.relCertifiedBy'),
+    segment_of: t('industryChain.relBusinessLines'),
   };
 
   const hasMarket =
@@ -187,6 +207,52 @@ function DetailView({ detail }: { detail: IndustryNodeDetailResponse }) {
           {f?.summary && <p className="text-sm font-medium mb-2">{f.summary}</p>}
           {f?.narrative && <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">{f.narrative}</p>}
         </section>
+      )}
+
+      {/* Supply Relations */}
+      {relations.length > 0 ? (
+        <section>
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+            {t('industryChain.sectionRelations')}
+          </h3>
+          <div className="divide-y divide-border/60">
+            {relations.map((r) => (
+              <div key={r.relation_id} className="flex items-center justify-between py-1.5">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-[10px] uppercase tracking-wider font-semibold px-1 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
+                    {relationTypeLabels[r.relation_type] ?? r.relation_type}
+                  </span>
+                  <span className="text-sm truncate">{r.other_name}</span>
+                  {r.note && (
+                    <span className="text-xs text-muted-foreground truncate hidden sm:inline">— {r.note}</span>
+                  )}
+                </div>
+                {onDeleteRelation && (
+                  <button
+                    className="shrink-0 p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                    onClick={() => {
+                      if (window.confirm(t('industryChain.confirmDeleteRelation'))) {
+                        onDeleteRelation(r.relation_id);
+                      }
+                    }}
+                    title={t('common.delete')}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : (
+        !onDeleteRelation && (
+          <section>
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+              {t('industryChain.sectionRelations')}
+            </h3>
+            <p className="text-sm text-muted-foreground">{t('industryChain.noRelations')}</p>
+          </section>
+        )
       )}
 
       {/* Market & position */}
@@ -430,6 +496,9 @@ export default function IndustryChain() {
   const [detail, setDetail] = useState<IndustryNodeDetailResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
+  // Relations state
+  const [relations, setRelations] = useState<IndustryRelation[]>([]);
+
   // Editor state
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState('');
@@ -437,6 +506,11 @@ export default function IndustryChain() {
   const [editDescription, setEditDescription] = useState('');
   const [editFields, setEditFields] = useState<IndustryNodeFields>({});
   const [editJsonError, setEditJsonError] = useState<string | null>(null);
+
+  // Add-relation form state
+  const [newRelationType, setNewRelationType] = useState<RelationType>('supplier');
+  const [newRelationTarget, setNewRelationTarget] = useState('');
+  const [newRelationNote, setNewRelationNote] = useState('');
 
   // New node form state
   const [showAddForm, setShowAddForm] = useState(false);
@@ -493,6 +567,15 @@ export default function IndustryChain() {
     }
   }, []);
 
+  const fetchRelations = useCallback(async (id: string) => {
+    try {
+      const res = await api.getIndustryNodeRelations(id);
+      setRelations(res.relations);
+    } catch {
+      setRelations([]);
+    }
+  }, []);
+
   useEffect(() => {
     fetchTree();
     fetchReviews();
@@ -513,7 +596,8 @@ export default function IndustryChain() {
       setEditDescription(node.description ?? '');
     }
     fetchDetail(id);
-  }, [nodes, fetchDetail]);
+    fetchRelations(id);
+  }, [nodes, fetchDetail, fetchRelations]);
 
   const handleToggle = useCallback((id: string) => {
     setExpandedIds((prev) => {
@@ -589,6 +673,32 @@ export default function IndustryChain() {
       await fetchTree();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete node');
+    }
+  };
+
+  const handleDeleteRelation = async (relationId: string) => {
+    try {
+      await api.deleteIndustryRelation(relationId);
+      if (selectedId) await fetchRelations(selectedId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete relation');
+    }
+  };
+
+  const handleAddRelation = async () => {
+    if (!selectedId || !newRelationTarget) return;
+    try {
+      const data: IndustryRelationCreate = {
+        relation_type: newRelationType,
+        target_id: newRelationTarget,
+        note: newRelationNote.trim() || undefined,
+      };
+      await api.addIndustryRelation(selectedId, data);
+      setNewRelationTarget('');
+      setNewRelationNote('');
+      await fetchRelations(selectedId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add relation');
     }
   };
 
@@ -752,6 +862,7 @@ export default function IndustryChain() {
                         <option value="sector">{t('industryChain.typeSector')}</option>
                         <option value="product">{t('industryChain.typeProduct')}</option>
                         <option value="company">{t('industryChain.typeCompany')}</option>
+                        <option value="external">{t('industryChain.typeExternal')}</option>
                       </select>
                     </div>
                     <div>
@@ -850,6 +961,7 @@ export default function IndustryChain() {
                             <option value="sector">{t('industryChain.typeSector')}</option>
                             <option value="product">{t('industryChain.typeProduct')}</option>
                             <option value="company">{t('industryChain.typeCompany')}</option>
+                            <option value="external">{t('industryChain.typeExternal')}</option>
                           </select>
                         </div>
                         <div>
@@ -870,6 +982,72 @@ export default function IndustryChain() {
                             setEditJsonError(null);
                           }}
                         />
+
+                        {/* Add relation */}
+                        <div className="border-t pt-3">
+                          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                            {t('industryChain.addRelation')}
+                          </h4>
+                          <div className="grid grid-cols-3 gap-2">
+                            <div>
+                              <label className="block text-xs text-muted-foreground mb-1">
+                                {t('industryChain.relationType')}
+                              </label>
+                              <select
+                                className="w-full h-9 px-2 rounded-md border border-input bg-background text-sm"
+                                value={newRelationType}
+                                onChange={(e) => setNewRelationType(e.target.value as RelationType)}
+                              >
+                                <option value="supplier">{t('industryChain.relUpstream')}</option>
+                                <option value="customer">{t('industryChain.relDownstream')}</option>
+                                <option value="substitute">{t('industryChain.relSubstitute')}</option>
+                                <option value="related">{t('industryChain.relRelated')}</option>
+                                <option value="certified_by">{t('industryChain.relCertifiedBy')}</option>
+                                <option value="segment_of">{t('industryChain.relBusinessLines')}</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-xs text-muted-foreground mb-1">
+                                {t('industryChain.targetNode')}
+                              </label>
+                              <select
+                                className="w-full h-9 px-2 rounded-md border border-input bg-background text-sm"
+                                value={newRelationTarget}
+                                onChange={(e) => setNewRelationTarget(e.target.value)}
+                              >
+                                <option value="">{t('industryChain.selectTarget')}</option>
+                                {nodes
+                                  .filter((n) => n.id !== selectedId)
+                                  .map((n) => (
+                                    <option key={n.id} value={n.id}>
+                                      [{n.type}] {n.name}
+                                    </option>
+                                  ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-xs text-muted-foreground mb-1">
+                                {t('industryChain.relationNote')}
+                              </label>
+                              <input
+                                className="w-full h-9 px-2 rounded-md border border-input bg-background text-sm"
+                                value={newRelationNote}
+                                onChange={(e) => setNewRelationNote(e.target.value)}
+                                placeholder={t('common.optional')}
+                              />
+                            </div>
+                          </div>
+                          <div className="mt-2">
+                            <button
+                              className="inline-flex items-center gap-1.5 h-7 px-3 rounded-md border border-input bg-background text-xs hover:bg-accent disabled:opacity-50"
+                              onClick={handleAddRelation}
+                              disabled={!newRelationTarget}
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                              {t('industryChain.addRelation')}
+                            </button>
+                          </div>
+                        </div>
 
                         <div className="flex gap-2 pt-2 border-t">
                           <button
@@ -899,7 +1077,7 @@ export default function IndustryChain() {
                         {t('common.loading')}
                       </div>
                     ) : detail ? (
-                      <DetailView detail={detail} />
+                      <DetailView detail={detail} relations={relations} onDeleteRelation={handleDeleteRelation} />
                     ) : (
                       <p className="text-sm text-muted-foreground">{t('industryChain.noDetail')}</p>
                     )

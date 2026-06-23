@@ -7,7 +7,7 @@ export interface IndustryNode {
   /** Display name */
   name: string;
   /** Node type */
-  type: 'chain' | 'sector' | 'product' | 'company' | 'unknown';
+  type: 'chain' | 'sector' | 'product' | 'company' | 'external' | 'unknown';
   /** Parent node ID (null for root) */
   parent_id: string | null;
   /** Description of this node */
@@ -20,14 +20,28 @@ export interface IndustryNode {
   metadata?: Record<string, unknown>;
 }
 
+/** Types of relationships between industry chain nodes */
+export type RelationType = 'supplier' | 'customer' | 'substitute' | 'related' | 'certified_by' | 'segment_of';
+
 /** Represents a relationship between two nodes */
 export interface IndustryRelation {
-  id: string;
+  relation_id: string;
   source_id: string;
   target_id: string;
-  relation_type: string;
-  /** Description of the relationship */
-  description?: string;
+  relation_type: RelationType;
+  note: string;
+  created_at: string;
+  updated_at: string;
+  /** The peer node (relative to the queried node) */
+  other_id: string;
+  other_name: string;
+  other_type: string;
+}
+
+/** Response wrapper for listing node relations */
+export interface IndustryRelationsResponse {
+  relations: IndustryRelation[];
+  total: number;
 }
 
 /** Request body for adding a node */
@@ -89,18 +103,16 @@ export interface IndustryNodeDetailResponse {
   snapshot_at?: string;
 }
 
-/** Request body for adding a relation */
+/** Request body for adding a relation (source node is in the URL path) */
 export interface IndustryRelationCreate {
-  source_id: string;
+  relation_type: RelationType;
   target_id: string;
-  relation_type: string;
-  description?: string;
+  note?: string;
 }
 
 /** Represents the full chain tree response */
 export interface IndustryChainTree {
   nodes: IndustryNode[];
-  relations: IndustryRelation[];
 }
 
 /** Represents a pending review item */

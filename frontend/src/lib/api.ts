@@ -6,7 +6,8 @@ import type {
   IndustryNodeResponse,
   IndustryNodeDetailResponse,
   IndustryRelationCreate,
-  IndustryRelationResponse,
+  IndustryRelation,
+  IndustryRelationsResponse,
   PendingReviewsResponse,
   IndustryChainStats,
 } from "@/types/industryChain";
@@ -248,12 +249,20 @@ export const api = {
       method: 'DELETE',
     }),
 
-  /** Add a relation between nodes */
-  addIndustryRelation: (data: IndustryRelationCreate) =>
-    request<IndustryRelationResponse>('/industry-chain/relations', {
+  /** Fetch relations for a node */
+  getIndustryNodeRelations: (id: string, direction: 'out' | 'in' | 'both' = 'both') =>
+    request<IndustryRelationsResponse>(`/industry-chain/nodes/${id}/relations?direction=${direction}`),
+
+  /** Add a relation from a node to a target */
+  addIndustryRelation: (nodeId: string, data: IndustryRelationCreate) =>
+    request<{ relation: IndustryRelation }>(`/industry-chain/nodes/${nodeId}/relations`, {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+
+  /** Delete a relation by ID */
+  deleteIndustryRelation: (relationId: string) =>
+    request<{ deleted: boolean }>(`/industry-chain/relations/${relationId}`, { method: 'DELETE' }),
 
   /** Approve a pending review */
   approveReview: (id: string) =>
