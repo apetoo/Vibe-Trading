@@ -30,6 +30,9 @@ _VALID_NODE_FIELDS = {
 _VALID_SOURCE_TYPES = {
     "annual_report", "prospectus", "exchange_announcement", "broker_report",
 }
+_VALID_RELATION_TYPES = {
+    "supplier", "customer", "substitute", "related", "certified_by", "segment_of",
+}
 _DEFAULT_DB_PATH = Path.home() / ".vibe-trading" / "industry_chain.db"
 _DB_PATH_ENV = "VIBE_TRADING_INDUSTRY_CHAIN_DB_PATH"
 
@@ -149,7 +152,21 @@ class IndustryChainStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_changes(status);
 
-                PRAGMA user_version=1;
+                CREATE TABLE IF NOT EXISTS node_relations (
+                    relation_id   TEXT PRIMARY KEY,
+                    source_id     TEXT NOT NULL,
+                    target_id     TEXT NOT NULL,
+                    relation_type TEXT NOT NULL,
+                    note          TEXT DEFAULT '',
+                    created_at    TEXT NOT NULL,
+                    updated_at    TEXT NOT NULL,
+                    FOREIGN KEY (source_id) REFERENCES nodes(node_id),
+                    FOREIGN KEY (target_id) REFERENCES nodes(node_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_relations_source ON node_relations(source_id);
+                CREATE INDEX IF NOT EXISTS idx_relations_target ON node_relations(target_id);
+
+                PRAGMA user_version=2;
             """)
 
     # -- Lifecycle --
@@ -559,3 +576,209 @@ class IndustryChainStore:
             "SELECT code, node_id FROM nodes WHERE code IS NOT NULL AND code != ''"
         ).fetchall()
         return {r["code"]: r["node_id"] for r in rows}
+
+    # -- Node Relations --
+
+    @_synchronized
+    def add_relation(
+        self, source_id: str, target_id: str, relation_type: str, note: str = ""
+    ) -> str:
+        """Add a directed edge between two nodes.
+
+        Edge semantics:
+        - A →[supplier]→ B: A is B's supplier (B's upstream is A)
+        - A →[customer]→ B: A is B's customer (B's downstream is A)
+        - A →[certified_by]→ B: A is certified by B (B is the chain owner)
+        - A →[segment_of]→ B: A participates in business line B
+        - substitute / related: no direction semantics, queried both ways
+
+        Deduplicates on (source_id, target_id, relation_type): returns the
+        existing relation_id if the same triple already exists.
+        """
+        if relation_type not in _VALID_RELATION_TYPES:
+            raise ValueError(
+                f"Invalid relation_type: {relation_type!r}. "
+                f"Valid: {sorted(_VALID_RELATION_TYPES)}"
+            )
+        if self.get_node(source_id) is None:
+            raise ValueError(f"Source node {source_id!r} does not exist")
+        if self.get_node(target_id) is None:
+            raise ValueError(f"Target node {target_id!r} does not exist")
+
+        # Dedupe: same triple already exists
+        existing = self._conn.execute(
+            "SELECT relation_id FROM node_relations "
+            "WHERE source_id=? AND target_id=? AND relation_type=?",
+            (source_id, target_id, relation_type),
+        ).fetchone()
+        if existing:
+            return existing["relation_id"]
+
+        rid = _id("rel")
+        now = _now_iso()
+        self._conn.execute(
+            "INSERT INTO node_relations (relation_id, source_id, target_id, "
+            "relation_type, note, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+            (rid, source_id, target_id, relation_type, note, now, now),
+        )
+        self._conn.commit()
+        return rid
+
+    @_synchronized
+    def list_relations(self, node_id: str, direction: str = "both") -> list[dict]:
+        """List edges involving a node.
+
+        direction: "out" (as source), "in" (as target), or "both".
+        Each result dict includes the peer node's name and node_type
+        as ``other_id`` / ``other_name`` / ``other_type``.
+        Returns empty list if the node does not exist.
+        """
+        if direction not in ("out", "in", "both"):
+            raise ValueError(
+                f"Invalid direction: {direction!r}. Must be 'out', 'in', or 'both'"
+            )
+
+        if direction == "out":
+            rows = self._conn.execute(
+                "SELECT nr.*, n.name AS other_name, n.node_type AS other_type "
+                "FROM node_relations nr "
+                "JOIN nodes n ON n.node_id = nr.target_id "
+                "WHERE nr.source_id=?",
+                (node_id,),
+            ).fetchall()
+        elif direction == "in":
+            rows = self._conn.execute(
+                "SELECT nr.*, n.name AS other_name, n.node_type AS other_type "
+                "FROM node_relations nr "
+                "JOIN nodes n ON n.node_id = nr.source_id "
+                "WHERE nr.target_id=?",
+                (node_id,),
+            ).fetchall()
+        else:  # both
+            rows = self._conn.execute(
+                "SELECT nr.*, "
+                "CASE WHEN nr.source_id = ? THEN nr.target_id ELSE nr.source_id END AS other_id, "
+                "CASE WHEN nr.source_id = ? THEN nt.name ELSE ns.name END AS other_name, "
+                "CASE WHEN nr.source_id = ? THEN nt.node_type ELSE ns.node_type END AS other_type "
+                "FROM node_relations nr "
+                "JOIN nodes ns ON ns.node_id = nr.source_id "
+                "JOIN nodes nt ON nt.node_id = nr.target_id "
+                "WHERE nr.source_id=? OR nr.target_id=?",
+                (node_id, node_id, node_id, node_id, node_id),
+            ).fetchall()
+
+        results = []
+        for r in rows:
+            d = dict(r)
+            if direction in ("out", "in"):
+                d["other_id"] = (
+                    d["target_id"] if direction == "out" else d["source_id"]
+                )
+            # "both" already has other_id/other_name/other_type from the query
+            results.append(d)
+        return results
+
+    @_synchronized
+    def remove_relation(self, relation_id: str) -> bool:
+        """Delete a relation edge. Returns True if deleted, False if not found."""
+        cur = self._conn.execute(
+            "DELETE FROM node_relations WHERE relation_id=?", (relation_id,)
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    @_synchronized
+    def get_node_context_graph(self, code: str) -> dict | None:
+        """Return a stock's full context graph (topology + names only, no dynamic fields).
+
+        Returns a dict with topology keys: stock_name, stock_code, node_id,
+        path (up to root with summary), competitors, upstream, downstream,
+        substitutes, related, certified_by, business_lines.
+        Returns None if no stock node with the given code exists.
+        """
+        row = self._conn.execute(
+            "SELECT * FROM nodes WHERE code=?", (code,)
+        ).fetchone()
+        if not row:
+            return None
+        stock = ChainNode(**dict(row))
+
+        # Path from stock up to root
+        path: list[dict] = []
+        current_id = stock.node_id
+        while current_id:
+            n = self.get_node(current_id)
+            if not n:
+                break
+            cv = self.get_node_current(current_id)
+            path.append({
+                "node_id": n.node_id,
+                "name": n.name,
+                "node_type": n.node_type if isinstance(n.node_type, str) else n.node_type.value,
+                "summary": cv.summary if cv else "",
+            })
+            current_id = n.parent_id
+        path.reverse()
+
+        # Competitors: same parent, STOCK type, exclude self
+        competitors: list[dict] = []
+        if stock.parent_id:
+            siblings = self.list_children(stock.parent_id)
+            for sib in siblings:
+                if sib.node_id != stock.node_id and sib.node_type == NodeType.STOCK:
+                    competitors.append({
+                        "node_id": sib.node_id,
+                        "name": sib.name,
+                        "code": sib.code,
+                    })
+
+        node_id = stock.node_id
+
+        # Upstream: edges where stock is target and relation_type is supplier
+        all_relations = self.list_relations(node_id, "both")
+        upstream = [
+            r for r in all_relations
+            if r["relation_type"] == "supplier" and r["target_id"] == node_id
+        ]
+
+        # Downstream: edges where stock is source and relation_type is customer
+        downstream = [
+            r for r in all_relations
+            if r["relation_type"] == "customer" and r["source_id"] == node_id
+        ]
+
+        # Substitutes: all directions, relation_type == substitute
+        substitutes = [
+            r for r in all_relations if r["relation_type"] == "substitute"
+        ]
+
+        # Related: all directions, relation_type == related
+        related = [
+            r for r in all_relations if r["relation_type"] == "related"
+        ]
+
+        # Certified by: stock is source, relation_type == certified_by
+        certified_by = [
+            r for r in all_relations
+            if r["relation_type"] == "certified_by" and r["source_id"] == node_id
+        ]
+
+        # Business lines: stock is source, relation_type == segment_of
+        business_lines = [
+            r for r in all_relations
+            if r["relation_type"] == "segment_of" and r["source_id"] == node_id
+        ]
+
+        return {
+            "stock_name": stock.name,
+            "stock_code": stock.code,
+            "node_id": stock.node_id,
+            "path": path,
+            "competitors": competitors,
+            "upstream": upstream,
+            "downstream": downstream,
+            "substitutes": substitutes,
+            "related": related,
+            "certified_by": certified_by,
+            "business_lines": business_lines,
+        }

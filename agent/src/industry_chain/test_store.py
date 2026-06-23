@@ -24,7 +24,7 @@ class TestInit:
     def test_user_version(self, tmp_path: Path):
         store = _store(tmp_path)
         row = store._conn.execute("PRAGMA user_version").fetchone()
-        assert row[0] == 1
+        assert row[0] == 2
         store.close()
 
     def test_wal_mode(self, tmp_path: Path):
@@ -38,7 +38,7 @@ class TestInit:
         tables = {r[0] for r in store._conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall()}
-        for name in ("nodes", "node_versions", "node_current", "sources", "pending_changes"):
+        for name in ("nodes", "node_versions", "node_current", "sources", "pending_changes", "node_relations"):
             assert name in tables, f"table {name!r} missing"
         store.close()
 
@@ -280,4 +280,147 @@ class TestConcurrency:
 
         versions = store.list_versions(nid)
         assert len(versions) == 2  # 2 updates = 2 versions
+        store.close()
+
+
+class TestNodeRelations:
+    def test_add_relation_and_dedupe(self, tmp_path: Path):
+        """add_relation succeeds and deduplicates same (source, target, type)."""
+        store = _store(tmp_path)
+        n1 = store.create_node(node_type=NodeType.STOCK, name="中际旭创", code="300308.SZ")
+        n2 = store.create_node(node_type=NodeType.EXTERNAL, name="外部供应商A")
+
+        rid1 = store.add_relation(n2, n1, "supplier", note="光芯片供应")
+        assert rid1.startswith("rel_")
+
+        # Same triple returns existing id, no error
+        rid2 = store.add_relation(n2, n1, "supplier", note="重复")
+        assert rid2 == rid1
+
+        store.close()
+
+    def test_add_relation_validation(self, tmp_path: Path):
+        """add_relation rejects invalid relation_type and missing nodes."""
+        store = _store(tmp_path)
+        n1 = store.create_node(node_type=NodeType.STOCK, name="中际旭创", code="300308.SZ")
+        n2 = store.create_node(node_type=NodeType.EXTERNAL, name="外部供应商A")
+
+        # Invalid relation_type
+        with pytest.raises(ValueError, match="Invalid relation_type"):
+            store.add_relation(n1, n2, "bogus_type")
+
+        # Non-existent source
+        with pytest.raises(ValueError, match="does not exist"):
+            store.add_relation("nd_nonexistent", n2, "supplier")
+
+        # Non-existent target
+        with pytest.raises(ValueError, match="does not exist"):
+            store.add_relation(n1, "nd_nonexistent", "supplier")
+
+        store.close()
+
+    def test_list_relations_directions(self, tmp_path: Path):
+        """list_relations returns correct edges for out, in, and both."""
+        store = _store(tmp_path)
+        stock = store.create_node(node_type=NodeType.STOCK, name="中际旭创", code="300308.SZ")
+        supplier = store.create_node(node_type=NodeType.EXTERNAL, name="供应商A")
+        customer = store.create_node(node_type=NodeType.EXTERNAL, name="客户B")
+
+        store.add_relation(supplier, stock, "supplier")
+        store.add_relation(stock, customer, "customer")
+
+        out_edges = store.list_relations(stock, "out")
+        assert len(out_edges) == 1
+        assert out_edges[0]["other_name"] == "客户B"
+        assert out_edges[0]["other_type"] == "external"
+
+        in_edges = store.list_relations(stock, "in")
+        assert len(in_edges) == 1
+        assert in_edges[0]["other_name"] == "供应商A"
+        assert in_edges[0]["other_type"] == "external"
+
+        both = store.list_relations(stock, "both")
+        assert len(both) == 2
+        names = {e["other_name"] for e in both}
+        assert names == {"供应商A", "客户B"}
+
+        # Non-existent node returns empty list
+        assert store.list_relations("nd_nonexistent", "both") == []
+
+        store.close()
+
+    def test_remove_relation(self, tmp_path: Path):
+        """remove_relation deletes and returns True; returns False if not found."""
+        store = _store(tmp_path)
+        n1 = store.create_node(node_type=NodeType.STOCK, name="A", code="000001.SZ")
+        n2 = store.create_node(node_type=NodeType.EXTERNAL, name="B")
+        rid = store.add_relation(n1, n2, "related")
+
+        assert store.remove_relation(rid) is True
+        assert store.remove_relation(rid) is False  # already gone
+        assert store.remove_relation("rel_nonexistent") is False
+
+        store.close()
+
+    def test_get_node_context_graph(self, tmp_path: Path):
+        """get_node_context_graph returns full topology with no dynamic fields."""
+        store = _store(tmp_path)
+        # Build a simple graph
+        track = store.create_node(node_type=NodeType.TRACK, name="AI 算力")
+        seg = store.create_node(parent_id=track, node_type=NodeType.SEGMENT, name="CPO")
+        link = store.create_node(parent_id=seg, node_type=NodeType.LINK, name="光模块")
+        stock = store.create_node(parent_id=link, node_type=NodeType.STOCK, name="中际旭创", code="300308.SZ")
+        competitor = store.create_node(parent_id=link, node_type=NodeType.STOCK, name="新易盛", code="300502.SZ")
+
+        supplier = store.create_node(node_type=NodeType.EXTERNAL, name="光芯片供应商")
+        customer = store.create_node(node_type=NodeType.EXTERNAL, name="数据中心客户")
+        substitute = store.create_node(node_type=NodeType.EXTERNAL, name="替代品厂商")
+
+        store.update_node(link, summary="光模块环节")
+        store.update_node(stock, summary="中际旭创简介")
+
+        store.add_relation(supplier, stock, "supplier")
+        store.add_relation(stock, customer, "customer")
+        store.add_relation(stock, substitute, "substitute")
+
+        ctx = store.get_node_context_graph("300308.SZ")
+        assert ctx is not None
+        assert ctx["stock_name"] == "中际旭创"
+        assert ctx["stock_code"] == "300308.SZ"
+
+        # Path
+        assert len(ctx["path"]) == 4
+        assert ctx["path"][0]["name"] == "AI 算力"
+        assert ctx["path"][3]["name"] == "中际旭创"
+
+        # Competitors
+        assert len(ctx["competitors"]) == 1
+        assert ctx["competitors"][0]["code"] == "300502.SZ"
+
+        # Upstream
+        assert len(ctx["upstream"]) == 1
+        assert ctx["upstream"][0]["other_name"] == "光芯片供应商"
+
+        # Downstream
+        assert len(ctx["downstream"]) == 1
+        assert ctx["downstream"][0]["other_name"] == "数据中心客户"
+
+        # Substitutes
+        assert len(ctx["substitutes"]) == 1
+        assert ctx["substitutes"][0]["other_name"] == "替代品厂商"
+
+        # Empty categories
+        assert ctx["related"] == []
+        assert ctx["certified_by"] == []
+        assert ctx["business_lines"] == []
+
+        # No dynamic fields on the returned dict
+        for key in ("market_size", "financials", "growth_rate", "operating_metrics",
+                     "customer_structure", "stock_summary", "stock_financials",
+                     "stock_metrics", "stock_customers"):
+            assert key not in ctx, f"dynamic field {key!r} should not be in context_graph"
+
+        # Unknown code
+        assert store.get_node_context_graph("000000.SZ") is None
+
         store.close()

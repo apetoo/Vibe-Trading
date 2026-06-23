@@ -9,6 +9,7 @@ class NodeType(str, Enum):
     SEGMENT = "segment"
     LINK = "link"
     STOCK = "stock"
+    EXTERNAL = "external"
 
 
 @dataclass(frozen=True)
