@@ -111,12 +111,14 @@ def main():
         edge_count += 1
         print(f"  [EDGE] 中际旭创 →[customer]→ {label}  ({rid})")
 
-    # 3c. Substitute edge (1): CPO segment ↔ 可插拔光模块
+    # 3c. Substitute edge (1): 中际旭创(CPO 产品) ↔ 可插拔光模块
+    # 边连在 stock 级而非 segment 级 —— get_node_context_graph 只查 stock
+    # 作为端点的边,stock 级边才能让 agent 注入看到替代关系。
     rid = store.add_relation(
-        source_id=CPO_SEGMENT, target_id=pluggable_id, relation_type="substitute",
+        source_id=ZJXC, target_id=pluggable_id, relation_type="substitute",
     )
     edge_count += 1
-    print(f"  [EDGE] CPO共封装光学 ↔[substitute]↔ 可插拔光模块  ({rid})")
+    print(f"  [EDGE] 中际旭创 ↔[substitute]↔ 可插拔光模块  ({rid})")
 
     # 3d. Certified_by edge (1): 中际旭创 →[certified_by]→ 英伟达
     rid = store.add_relation(
@@ -180,11 +182,11 @@ def main():
 
     check(len(ctx["upstream"]) == 4, "upstream = 4")
     check(len(ctx["downstream"]) == 3, "downstream = 3")
-    # NOTE: substitute edge is between CPO segment and 可插拔光模块,
-    # not involving the stock directly. get_node_context_graph only
-    # queries edges where the stock is an endpoint, so substitutes=0.
-    check(len(ctx["substitutes"]) == 0,
-          "substitutes = 0 (edge is CPO↔可插拔, not stock-involved)")
+    # Substitute edge is stock-level: 中际旭创 ↔ 可插拔光模块(link).
+    # get_node_context_graph queries edges where the stock is an endpoint,
+    # so the stock-level substitute edge IS visible here.
+    check(len(ctx["substitutes"]) == 1,
+          "substitutes = 1 (中际旭创 ↔ 可插拔光模块, stock-level edge)")
     check(len(ctx["certified_by"]) == 1, "certified_by = 1")
     check(len(ctx["competitors"]) == 2, "competitors = 2")
 
@@ -198,11 +200,10 @@ def main():
     check("operating_metrics" not in ctx, "no operating_metrics in context graph")
     check("customer_structure" not in ctx, "no customer_structure in context graph")
 
-    # Verify list_relations count (stock-involved edges only)
+    # Verify list_relations count: 4 supplier + 3 customer + 1 substitute + 1 certified_by = 9
     all_rels = store.list_relations(ZJXC, "both")
-    check(len(all_rels) == 8,
-          f"list_relations(stock) = {len(all_rels)} (expected 8: 4 supplier + 3 customer + 1 certified_by. "
-          f"Substitute edge (CPO↔可插拔) does not involve stock)")
+    check(len(all_rels) == 9,
+          f"list_relations(stock) = {len(all_rels)} (expected 9: 4 supplier + 3 customer + 1 substitute + 1 certified_by)")
 
     if errors:
         print(f"\n  {len(errors)} assertion(s) FAILED!")
