@@ -63,7 +63,7 @@ def merge_provenance(extra_json: str, updates: dict[str, dict]) -> str:
         prov = {}
     for field, meta in updates.items():
         entry = {"src": meta.get("src", "unknown")}
-        entry.update({k: v for k, v in meta.items()})
+        entry.update(meta)
         entry.setdefault("ts", _now_iso())
         prov[field] = entry
     obj["field_provenance"] = prov
