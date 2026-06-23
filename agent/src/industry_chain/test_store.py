@@ -424,3 +424,22 @@ class TestNodeRelations:
         assert store.get_node_context_graph("000000.SZ") is None
 
         store.close()
+
+
+class TestSourceTypes:
+    def test_llm_and_api_in_valid_source_types(self, tmp_path: Path):
+        from src.industry_chain.store import _VALID_SOURCE_TYPES
+        assert "llm" in _VALID_SOURCE_TYPES
+        assert "api" in _VALID_SOURCE_TYPES
+
+    def test_draft_change_accepts_llm_source(self, tmp_path: Path):
+        store = _store(tmp_path)
+        nid = store.create_node(name="测试节点", node_type=NodeType.TRACK)
+        vid = store.update_node(nid, summary="初始")
+        cid = store.draft_change(
+            node_id=nid,
+            proposed_fields=json.dumps({"summary": "更新"}, ensure_ascii=False),
+            proposed_sources=json.dumps([{"source_type": "llm", "publisher": "Claude"}], ensure_ascii=False),
+        )
+        assert cid
+        store.close()

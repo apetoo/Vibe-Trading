@@ -29,6 +29,7 @@ _VALID_NODE_FIELDS = {
 }
 _VALID_SOURCE_TYPES = {
     "annual_report", "prospectus", "exchange_announcement", "broker_report",
+    "llm", "api",
 }
 _VALID_RELATION_TYPES = {
     "supplier", "customer", "substitute", "related", "certified_by", "segment_of",
@@ -677,6 +678,20 @@ class IndustryChainStore:
             # "both" already has other_id/other_name/other_type from the query
             results.append(d)
         return results
+
+    @_synchronized
+    def list_all_relations(self) -> list[dict]:
+        """Return all relation edges without peer denormalization.
+
+        Used by /tree to populate the graph in one round-trip. Each dict has
+        relation_id, source_id, target_id, relation_type, note — no peer
+        name/type; the frontend looks those up from the node list.
+        """
+        rows = self._conn.execute(
+            "SELECT relation_id, source_id, target_id, relation_type, note "
+            "FROM node_relations ORDER BY created_at"
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     @_synchronized
     def remove_relation(self, relation_id: str) -> bool:
