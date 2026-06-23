@@ -19,8 +19,6 @@ from src.industry_chain import provenance
 _CODE_RE = re.compile(r"^\d{6}\.(SH|SZ|BJ)$")
 
 
-def _now_iso() -> str:
-    return datetime.now(tz=timezone.utc).isoformat()
 
 
 def _get_pro(pro: Any = None):
