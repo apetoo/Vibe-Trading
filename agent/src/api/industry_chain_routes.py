@@ -292,7 +292,7 @@ def register_industry_chain_routes(
             }
         }
 
-    @app.get("/industry-chain/nodes/{node_id}/relations")
+    @app.get("/industry-chain/nodes/{node_id}/relations", dependencies=[Depends(require_auth)])
     async def list_relations(
         node_id: str,
         direction: str = Query("both", description="out, in, or both"),
