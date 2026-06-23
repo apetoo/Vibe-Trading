@@ -25,7 +25,11 @@ def test_set_field_provenance_overwrites_same_field():
     base = json.dumps({"field_provenance": {"summary": {"src": "llm", "old": True}}})
     out = provenance.set_field_provenance(base, "summary", src="human", verified=True)
     extra = json.loads(out)
-    assert extra["field_provenance"]["summary"] == {"src": "human", "verified": True, "ts": out and extra["field_provenance"]["summary"]["ts"]}
+    entry = extra["field_provenance"]["summary"]
+    assert entry["src"] == "human"
+    assert entry["verified"] is True
+    assert "ts" in entry
+    assert "old" not in entry
 
 
 def test_get_field_provenance():

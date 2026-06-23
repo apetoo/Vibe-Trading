@@ -102,3 +102,57 @@ class TestGenerateTrack:
         extra = json.loads(v.extra)
         assert extra.get("code_unverified") is True
         store.close()
+
+    def test_retry_on_malformed_json_succeeds(self, tmp_path: Path):
+        """Finding 3: malformed JSON on first try, valid on retry — succeeds."""
+        store = _store(tmp_path)
+        llm = MagicMock()
+        llm.chat.side_effect = [
+            MagicMock(content="not valid json {{{"),
+            MagicMock(content=json.dumps(_FAKE_LLM_JSON, ensure_ascii=False)),
+        ]
+        tid = generate.generate_track(store, "人形机器人", llm=llm)
+        assert llm.chat.call_count == 2
+        tree = store.get_tree()
+        names = {n["name"] for n in tree}
+        assert "人形机器人" in names
+        assert "绿的谐波" in names
+        store.close()
+
+    def test_retry_twice_malformed_raises_runtime_error(self, tmp_path: Path):
+        """Finding 3: both attempts return bad JSON → RuntimeError."""
+        store = _store(tmp_path)
+        llm = MagicMock()
+        llm.chat.side_effect = [
+            MagicMock(content="not valid json {{{"),
+            MagicMock(content="still not valid json }}}"),
+        ]
+        with pytest.raises(RuntimeError, match="LLM returned unparseable JSON"):
+            generate.generate_track(store, "人形机器人", llm=llm)
+        store.close()
+
+    def test_missing_name_keys_skipped(self, tmp_path: Path):
+        """Finding 4: missing 'name' on a stock is skipped without crash."""
+        payload = json.loads(json.dumps(_FAKE_LLM_JSON))
+        # Add a malformed stock with no "name" key inside a valid link
+        payload["segments"].append({
+            "name": "传感器",
+            "summary": "感知层",
+            "links": [{
+                "name": "力矩传感器",
+                "summary": "力控核心",
+                "stocks": [
+                    {"code": "300124.SZ", "summary": "汇川技术"},  # no "name"
+                    {"name": "柯力传感", "code": "603662.SH", "summary": "称重龙头"},
+                ],
+            }],
+        })
+        store = _store(tmp_path)
+        llm = _fake_llm(payload)
+        generate.generate_track(store, "人形机器人", llm=llm)
+        tree = store.get_tree()
+        names = {n["name"] for n in tree}
+        assert "柯力传感" in names
+        # nameless stock should be skipped
+        assert "汇川技术" not in names
+        store.close()

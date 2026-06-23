@@ -110,24 +110,46 @@ def generate_track(store: IndustryChainStore, track_name: str, llm: Any = None) 
     if llm is None:
         from src.providers.chat import ChatLLM
         llm = ChatLLM()
-    resp = llm.chat([{"role": "user", "content": build_prompt(track_name)}])
-    payload = parse_track_json(resp.content)
+    llm_messages = [{"role": "user", "content": build_prompt(track_name)}]
+    try:
+        resp = llm.chat(llm_messages)
+        payload = parse_track_json(resp.content)
+    except json.JSONDecodeError as e:
+        resp = llm.chat(llm_messages)
+        try:
+            payload = parse_track_json(resp.content)
+        except json.JSONDecodeError as e2:
+            raise RuntimeError(
+                f"LLM returned unparseable JSON for track {track_name!r} after retry: {e2}"
+            ) from e2
 
     track = payload.get("track", {})
     track_id = _write_node(store, None, NodeType.TRACK, track_name, None, track, existing)
 
     for seg in payload.get("segments", []):
-        seg_id = _write_node(store, track_id, NodeType.SEGMENT, seg["name"], None, seg, existing)
+        seg_name = seg.get("name", "")
+        if not seg_name:
+            continue
+        seg_id = _write_node(store, track_id, NodeType.SEGMENT, seg_name, None, seg, existing)
         for link in seg.get("links", []):
-            link_id = _write_node(store, seg_id, NodeType.LINK, link["name"], None, link, existing)
+            link_name = link.get("name", "")
+            if not link_name:
+                continue
+            link_id = _write_node(store, seg_id, NodeType.LINK, link_name, None, link, existing)
             for stock in link.get("stocks", []):
+                stock_name = stock.get("name", "")
+                if not stock_name:
+                    continue
                 code = stock.get("code") or None
                 if code == "":
                     code = None
-                _write_node(store, link_id, NodeType.STOCK, stock["name"], code, stock, existing)
+                _write_node(store, link_id, NodeType.STOCK, stock_name, code, stock, existing)
 
     for ext in payload.get("externals", []):
-        _write_node(store, track_id, NodeType.EXTERNAL, ext["name"], None, ext, existing)
+        ext_name = ext.get("name", "")
+        if not ext_name:
+            continue
+        _write_node(store, track_id, NodeType.EXTERNAL, ext_name, None, ext, existing)
 
     # Edges: only certified_by / substitute, resolved by name
     for edge in payload.get("edges", []):
@@ -138,7 +160,7 @@ def generate_track(store: IndustryChainStore, track_name: str, llm: Any = None) 
         dst_id = existing.get(edge.get("dst"))
         if not src_id or not dst_id:
             continue
-        note = json.dumps({"src": "llm"}, ensure_ascii=False) if not edge.get("note") else edge["note"]
+        note = json.dumps({"src": "llm", "text": edge.get("note", "")}, ensure_ascii=False)
         store.add_relation(src_id, dst_id, rtype, note=note)
 
     return track_id

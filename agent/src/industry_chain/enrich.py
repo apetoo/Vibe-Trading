@@ -19,8 +19,6 @@ from src.industry_chain import provenance
 _CODE_RE = re.compile(r"^\d{6}\.(SH|SZ|BJ)$")
 
 
-
-
 def _get_pro(pro: Any = None):
     """Return a tushare pro_api client. If ``pro`` is provided (for tests),
     use it directly. Otherwise build one from TUSHARE_TOKEN."""
@@ -114,7 +112,8 @@ def enrich_stock(store: IndustryChainStore, node_id: str, code: str,
         return False
 
     fields: dict[str, str] = {}
-    extra = store.get_node_current(node_id).extra if store.get_node_current(node_id) else "{}"
+    current = store.get_node_current(node_id)
+    extra = current.extra if current else "{}"
     if fin:
         fields["financials"] = json.dumps(fin, ensure_ascii=False)
         extra = provenance.set_field_provenance(extra, "financials", src="tushare", ref=code)
@@ -123,8 +122,14 @@ def enrich_stock(store: IndustryChainStore, node_id: str, code: str,
             {"or_yoy": fin.get("or_yoy"), "q_profit_yoy": fin.get("q_profit_yoy")}, ensure_ascii=False)
         extra = provenance.set_field_provenance(extra, "operating_metrics", src="tushare", ref=code)
     if holders:
-        fields["customer_structure"] = json.dumps(
-            {"holders": holders, "partial": "holders_only"}, ensure_ascii=False)
+        existing_cs = {}
+        try:
+            existing_cs = json.loads(current.customer_structure) if current and current.customer_structure else {}
+        except (json.JSONDecodeError, TypeError):
+            pass
+        existing_cs["holders"] = holders
+        existing_cs["partial"] = "holders_only"
+        fields["customer_structure"] = json.dumps(existing_cs, ensure_ascii=False)
         extra = provenance.set_field_provenance(extra, "customer_structure", src="tushare",
                                                 ref=code, partial="holders_only")
     fields["extra"] = extra
