@@ -241,21 +241,37 @@ class ContextBuilder:
                     _code_idx = _ic_store.get_node_code_index()
                     for _code in _code_match:
                         if _code in _code_idx:
-                            _ctx = _ic_store.get_stock_context(_code)
+                            _ctx = _ic_store.get_node_context_graph(_code)
                             if _ctx:
                                 _ctx_lines = [
                                     "<industry-chain-context>",
                                     f"Stock: {_ctx['stock_name']} ({_ctx['stock_code']})",
                                     f"Chain: {' → '.join(p['name'] for p in _ctx['path'])}",
                                 ]
-                                if _ctx.get('stock_summary'):
-                                    _ctx_lines.append(f"Summary: {_ctx['stock_summary']}")
+                                if _ctx.get('upstream'):
+                                    _ctx_lines.append(
+                                        f"Upstream: {', '.join(u['other_name'] for u in _ctx['upstream'])}"
+                                    )
+                                if _ctx.get('downstream'):
+                                    _ctx_lines.append(
+                                        f"Downstream: {', '.join(d['other_name'] for d in _ctx['downstream'])}"
+                                    )
+                                if _ctx.get('substitutes'):
+                                    _ctx_lines.append(
+                                        f"Substitutes: {', '.join(s['other_name'] for s in _ctx['substitutes'])}"
+                                    )
                                 if _ctx.get('competitors'):
-                                    _ctx_lines.append(f"Competitors: {', '.join(c['name'] for c in _ctx['competitors'])}")
-                                if _ctx.get('market_size'):
-                                    _ctx_lines.append(f"Market size: {_ctx['market_size']}")
-                                if _ctx.get('localization'):
-                                    _ctx_lines.append(f"Localization rate: {_ctx['localization']}")
+                                    _ctx_lines.append(
+                                        f"Competitors: {', '.join(c['name'] for c in _ctx['competitors'])}"
+                                    )
+                                if _ctx.get('certified_by'):
+                                    _ctx_lines.append(
+                                        f"Certified by: {', '.join(c['other_name'] for c in _ctx['certified_by'])}"
+                                    )
+                                if _ctx.get('business_lines'):
+                                    _ctx_lines.append(
+                                        f"Business lines: {', '.join(b['other_name'] for b in _ctx['business_lines'])}"
+                                    )
                                 _ctx_lines.append("</industry-chain-context>\n")
                                 enriched = "\n".join(_ctx_lines) + enriched
                                 break
