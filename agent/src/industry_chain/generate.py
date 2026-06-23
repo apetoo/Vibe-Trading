@@ -40,8 +40,10 @@ JSON schema：
 要求：
 1. stock.code 用 A 股代码格式 6 位数字.SH/.SZ/.BJ，不确定就留空字符串。
 2. edges 只允许 certified_by（认证关系）和 substitute（同环节替代）两种；不要输出 supplier/customer。
-3. externals 是海外/非上市公司，name 带「(英文名)」。
-4. 每个环节至少列出代表性 A 股标的。
+3. externals 是海外/非上市公司，name 带「(英文名)」，最多 5 个。
+4. 每个环节列 2-3 个代表性 A 股标的，不要超过 3 个。
+5. 所有 summary 控制在一句话（30 字以内），market_size/localization 用简短数字+单位。
+6. segments 3-4 个，每个 segment 下 links 2-4 个，总输出控制在 8000 字以内，确保 JSON 完整不截断。
 """
 
 
