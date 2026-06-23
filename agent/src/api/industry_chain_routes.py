@@ -40,6 +40,7 @@ _BACKEND_TO_FRONTEND_TYPE = {
     "segment": "sector",
     "link": "product",
     "stock": "company",
+    "external": "external",
 }
 
 # Reverse map
@@ -259,6 +260,63 @@ def register_industry_chain_routes(
         except ValueError as e:
             raise HTTPException(409, str(e))
         return {"status": "deleted", "success": True}
+
+    # ── Relations ────────────────────────────────────────────────
+
+    @app.post("/industry-chain/nodes/{node_id}/relations", dependencies=[Depends(require_auth)])
+    async def add_relation(node_id: str, body: dict):
+        """Add a directed relation edge from node_id to target_id."""
+        store = _get_store()
+        if not await asyncio.to_thread(store.get_node, node_id):
+            raise HTTPException(404, f"Node {node_id!r} not found")
+        target_id = body.get("target_id", "")
+        relation_type = body.get("relation_type", "")
+        note = body.get("note", "")
+        try:
+            rid = await asyncio.to_thread(
+                store.add_relation,
+                source_id=node_id,
+                target_id=target_id,
+                relation_type=relation_type,
+                note=note,
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {
+            "relation": {
+                "relation_id": rid,
+                "source_id": node_id,
+                "target_id": target_id,
+                "relation_type": relation_type,
+                "note": note,
+            }
+        }
+
+    @app.get("/industry-chain/nodes/{node_id}/relations")
+    async def list_relations(
+        node_id: str,
+        direction: str = Query("both", description="out, in, or both"),
+    ):
+        """List relations involving a node."""
+        store = _get_store()
+        if not await asyncio.to_thread(store.get_node, node_id):
+            raise HTTPException(404, f"Node {node_id!r} not found")
+        try:
+            relations = await asyncio.to_thread(
+                store.list_relations, node_id, direction
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"relations": relations, "total": len(relations)}
+
+    @app.delete("/industry-chain/relations/{relation_id}", dependencies=[Depends(require_auth)])
+    async def delete_relation(relation_id: str):
+        """Delete a relation edge."""
+        store = _get_store()
+        deleted = await asyncio.to_thread(store.remove_relation, relation_id)
+        if not deleted:
+            raise HTTPException(404, f"Relation {relation_id!r} not found")
+        return {"deleted": True}
 
     # ── Reviews (frontend-facing) ─────────────────────────────────
 

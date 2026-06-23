@@ -124,3 +124,139 @@ def test_get_context_unknown_code(tmp_path: Path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
     resp = client.get("/industry-chain/context?code=000000.SZ")
     assert resp.status_code == 404
+
+
+# ── Relations API tests ────────────────────────────────────────
+
+def test_create_external_node(tmp_path: Path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    create = client.post("/industry-chain/nodes", json={
+        "parent_id": None, "type": "external", "name": "外部合作方",
+    })
+    assert create.status_code in (200, 201)
+    nid = create.json()["node"]["id"]
+    assert create.json()["node"]["type"] == "external"
+
+    resp = client.get(f"/industry-chain/nodes/{nid}")
+    assert resp.status_code == 200
+    assert resp.json()["node"]["type"] == "external"
+
+
+def test_add_and_list_relation(tmp_path: Path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    # Create two stock nodes
+    a = client.post("/industry-chain/nodes", json={
+        "parent_id": None, "type": "company", "name": "中际旭创", "code": "300308.SZ",
+    })
+    a_id = a.json()["node"]["id"]
+    b = client.post("/industry-chain/nodes", json={
+        "parent_id": None, "type": "company", "name": "英伟达", "code": "NVDA",
+    })
+    b_id = b.json()["node"]["id"]
+
+    # Add relation: A is supplier of B (A →[supplier]→ B)
+    add = client.post(f"/industry-chain/nodes/{a_id}/relations", json={
+        "relation_type": "supplier", "target_id": b_id,
+    })
+    assert add.status_code in (200, 201)
+    rel = add.json()["relation"]
+    assert rel["relation_type"] == "supplier"
+    assert rel["source_id"] == a_id
+    assert rel["target_id"] == b_id
+
+    # List relations for A
+    resp = client.get(f"/industry-chain/nodes/{a_id}/relations")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 1
+    assert data["relations"][0]["other_name"] == "英伟达"
+
+
+def test_add_relation_validation(tmp_path: Path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    a = client.post("/industry-chain/nodes", json={
+        "parent_id": None, "type": "company", "name": "A", "code": "000001.SZ",
+    })
+    a_id = a.json()["node"]["id"]
+
+    # Invalid relation_type
+    resp = client.post(f"/industry-chain/nodes/{a_id}/relations", json={
+        "relation_type": "bogus", "target_id": a_id,
+    })
+    assert resp.status_code == 400
+
+    # Non-existent target
+    resp = client.post(f"/industry-chain/nodes/{a_id}/relations", json={
+        "relation_type": "supplier", "target_id": "nonexistent",
+    })
+    assert resp.status_code == 400
+
+    # Non-existent source node (the node_id in the path)
+    resp = client.post("/industry-chain/nodes/nonexistent/relations", json={
+        "relation_type": "supplier", "target_id": a_id,
+    })
+    assert resp.status_code == 404
+
+
+def test_delete_relation(tmp_path: Path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    a = client.post("/industry-chain/nodes", json={
+        "parent_id": None, "type": "company", "name": "A", "code": "000001.SZ",
+    })
+    a_id = a.json()["node"]["id"]
+    b = client.post("/industry-chain/nodes", json={
+        "parent_id": None, "type": "company", "name": "B", "code": "000002.SZ",
+    })
+    b_id = b.json()["node"]["id"]
+
+    # Add relation
+    add = client.post(f"/industry-chain/nodes/{a_id}/relations", json={
+        "relation_type": "supplier", "target_id": b_id,
+    })
+    rel_id = add.json()["relation"]["relation_id"]
+
+    # Delete it
+    resp = client.delete(f"/industry-chain/relations/{rel_id}")
+    assert resp.status_code in (200, 204)
+    assert resp.json()["deleted"] is True
+
+    # Delete again → 404
+    resp = client.delete(f"/industry-chain/relations/{rel_id}")
+    assert resp.status_code == 404
+
+
+def test_relation_direction(tmp_path: Path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    a = client.post("/industry-chain/nodes", json={
+        "parent_id": None, "type": "company", "name": "A", "code": "000001.SZ",
+    })
+    a_id = a.json()["node"]["id"]
+    b = client.post("/industry-chain/nodes", json={
+        "parent_id": None, "type": "company", "name": "B", "code": "000002.SZ",
+    })
+    b_id = b.json()["node"]["id"]
+
+    # A →[supplier]→ B: A is the source, B is the target
+    client.post(f"/industry-chain/nodes/{a_id}/relations", json={
+        "relation_type": "supplier", "target_id": b_id,
+    })
+
+    # From A's perspective (out): should see the relation
+    out = client.get(f"/industry-chain/nodes/{a_id}/relations?direction=out")
+    assert out.status_code == 200
+    assert out.json()["total"] == 1
+
+    # From A's perspective (in): should NOT see the relation
+    in_resp = client.get(f"/industry-chain/nodes/{a_id}/relations?direction=in")
+    assert in_resp.status_code == 200
+    assert in_resp.json()["total"] == 0
+
+    # From B's perspective (in): should see the relation
+    in_resp = client.get(f"/industry-chain/nodes/{b_id}/relations?direction=in")
+    assert in_resp.status_code == 200
+    assert in_resp.json()["total"] == 1
+
+    # From B's perspective (out): should NOT see the relation
+    out = client.get(f"/industry-chain/nodes/{b_id}/relations?direction=out")
+    assert out.status_code == 200
+    assert out.json()["total"] == 0
