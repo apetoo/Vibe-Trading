@@ -415,7 +415,21 @@
     "noRelations": "暂无供给关系",
     "selectTarget": "选择目标节点…",
     "confirmDeleteRelation": "确定要删除此关系吗？",
-    "typeExternal": "外部节点"
+    "typeExternal": "外部节点",
+    "graphTab": "图谱视图",
+    "nodeDetails": "节点详情",
+    "collapseDetail": "收起",
+    "expandDetail": "展开详情",
+    "fitView": "适应窗口",
+    "relayout": "重新布局",
+    "showTreeEdges": "层级关系",
+    "filterByType": "类型筛选",
+    "searchPlaceholder": "搜索节点…",
+    "tooltipChainPath": "产业链路径",
+    "tooltipRelations": "关系",
+    "tooltipNoRelations": "无关系",
+    "nodesCount": "{{count}} 节点",
+    "edgesCount": "{{count}} 关系"
   },
   "alphaZoo": {
     "title": "Alpha 动物园",

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Network, Plus, Edit3, Check, X, ChevronDown, ChevronRight, Loader2, ExternalLink, FileText, Trash2 } from 'lucide-react';
+import { Network, Plus, Edit3, Check, X, PanelRightClose, PanelRightOpen, Loader2, ExternalLink, FileText, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
+import { IndustryChainGraph } from '@/components/industry-chain/IndustryChainGraph';
 import type {
   IndustryNode,
   IndustryNodeCreate,
@@ -10,6 +11,7 @@ import type {
   IndustryNodeDetailResponse,
   IndustryRelation,
   IndustryRelationCreate,
+  IndustryRelationEdge,
   RelationType,
   PendingReview,
 } from '../types/industryChain';
@@ -44,80 +46,6 @@ const SOURCE_TYPE_LABELS: Record<string, string> = {
   exchange_announcement: '交易所公告',
   broker_report: '券商研报',
 };
-
-// ─── Node Tree Sub-component ───────────────────────────────────────
-
-function TreeNode({
-  node,
-  nodes,
-  depth,
-  selectedId,
-  onSelect,
-  expandedIds,
-  onToggle,
-}: {
-  node: IndustryNode;
-  nodes: IndustryNode[];
-  depth: number;
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-  expandedIds: Set<string>;
-  onToggle: (id: string) => void;
-}) {
-  const children = getChildren(nodes, node.id);
-  const isExpanded = expandedIds.has(node.id);
-  const isSelected = selectedId === node.id;
-
-  const typeColors: Record<string, string> = {
-    chain: 'text-blue-600 dark:text-blue-400',
-    sector: 'text-emerald-600 dark:text-emerald-400',
-    product: 'text-purple-600 dark:text-purple-400',
-    company: 'text-amber-600 dark:text-amber-400',
-    external: 'text-orange-600 dark:text-orange-400',
-  };
-
-  return (
-    <>
-      <button
-        className={`w-full flex items-center gap-1 px-2 py-1.5 text-sm rounded-md transition-colors hover:bg-accent/50 ${
-          isSelected ? 'bg-accent font-medium' : ''
-        }`}
-        style={{ paddingLeft: `${12 + depth * 16}px` }}
-        onClick={() => onSelect(node.id)}
-      >
-        {children.length > 0 ? (
-          <span
-            className="shrink-0 cursor-pointer p-0.5 rounded hover:bg-muted"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggle(node.id);
-            }}
-          >
-            {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-          </span>
-        ) : (
-          <span className="w-4 shrink-0" />
-        )}
-        <span className={`text-[10px] uppercase tracking-wider font-semibold ${typeColors[node.type] ?? 'text-muted-foreground'}`}>
-          {node.type}
-        </span>
-        <span className="truncate">{node.name}</span>
-      </button>
-      {isExpanded && children.map((child) => (
-        <TreeNode
-          key={child.id}
-          node={child}
-          nodes={nodes}
-          depth={depth + 1}
-          selectedId={selectedId}
-          onSelect={onSelect}
-          expandedIds={expandedIds}
-          onToggle={onToggle}
-        />
-      ))}
-    </>
-  );
-}
 
 // ─── Read-only field row helpers ───────────────────────────────────
 
@@ -497,8 +425,9 @@ export default function IndustryChain() {
 
   // Data state
   const [nodes, setNodes] = useState<IndustryNode[]>([]);
+  const [graphRelations, setGraphRelations] = useState<IndustryRelationEdge[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [detailCollapsed, setDetailCollapsed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -541,10 +470,7 @@ export default function IndustryChain() {
       setError(null);
       const res = await api.getIndustryChainTree();
       setNodes(res.tree.nodes);
-      // Expand root level by default
-      const rootIds = new Set<string>();
-      res.tree.nodes.filter((n: IndustryNode) => n.parent_id === null).forEach((n: IndustryNode) => rootIds.add(n.id));
-      setExpandedIds(rootIds);
+      setGraphRelations(res.tree.relations ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load industry chain');
     } finally {
@@ -609,15 +535,6 @@ export default function IndustryChain() {
     fetchRelations(id);
   }, [nodes, fetchDetail, fetchRelations]);
 
-  const handleToggle = useCallback((id: string) => {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
-
   const startEditing = () => {
     if (!detail) return;
     setEditFields({ ...detail.fields });
@@ -663,10 +580,6 @@ export default function IndustryChain() {
       setNewName('');
       setNewType('sector');
       setNewDescription('');
-      // Expand parent to show new child
-      if (selectedId) {
-        setExpandedIds((prev) => new Set(prev).add(selectedId));
-      }
       await fetchTree();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add node');
@@ -690,6 +603,7 @@ export default function IndustryChain() {
     try {
       await api.deleteIndustryRelation(relationId);
       if (selectedId) await fetchRelations(selectedId);
+      await fetchTree();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete relation');
     }
@@ -707,6 +621,7 @@ export default function IndustryChain() {
       setNewRelationTarget('');
       setNewRelationNote('');
       await fetchRelations(selectedId);
+      await fetchTree();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add relation');
     }
@@ -733,8 +648,6 @@ export default function IndustryChain() {
   };
 
   // ─── Render ─────────────────────────────────────────────────────
-
-  const rootNodes = getChildren(nodes, null);
 
   return (
     <div className="flex flex-col h-full">
@@ -765,7 +678,7 @@ export default function IndustryChain() {
           }`}
           onClick={() => setActiveTab('tree')}
         >
-          {t('industryChain.treeTab')}
+          {t('industryChain.graphTab')}
         </button>
         <button
           className={`relative px-4 py-2 text-sm font-medium rounded-t-md transition-colors ${
@@ -788,62 +701,62 @@ export default function IndustryChain() {
       <div className="flex flex-1 overflow-hidden">
         {activeTab === 'tree' && (
           <>
-            {/* Tree sidebar */}
-            <aside className="w-72 border-r overflow-y-auto shrink-0">
-              <div className="p-3 border-b flex items-center justify-between">
-                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                  {t('industryChain.nodeTree')}
-                </span>
-                <button
-                  className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-                  onClick={() => {
-                    setShowAddForm(true);
-                    setEditing(false);
-                  }}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  {t('industryChain.addNode')}
-                </button>
-              </div>
-
+            {/* Graph canvas */}
+            <main className="flex-1 relative overflow-hidden bg-muted/20">
               {loading ? (
-                <div className="flex items-center justify-center py-12 text-muted-foreground">
+                <div className="flex items-center justify-center h-full text-muted-foreground">
                   <Loader2 className="h-5 w-5 animate-spin mr-2" />
                   {t('common.loading')}
                 </div>
-              ) : rootNodes.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 px-4 text-center text-muted-foreground">
+              ) : nodes.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground">
                   <Network className="h-10 w-10 mb-3 opacity-30" />
                   <p className="text-sm">{t('industryChain.emptyTree')}</p>
                   <button
                     className="mt-3 text-sm text-primary hover:underline"
-                    onClick={() => {
-                      setShowAddForm(true);
-                    }}
+                    onClick={() => setShowAddForm(true)}
                   >
                     {t('industryChain.createFirstNode')}
                   </button>
                 </div>
               ) : (
-                <div className="py-2">
-                  {rootNodes.map((node) => (
-                    <TreeNode
-                      key={node.id}
-                      node={node}
-                      nodes={nodes}
-                      depth={0}
-                      selectedId={selectedId}
-                      onSelect={handleSelect}
-                      expandedIds={expandedIds}
-                      onToggle={handleToggle}
-                    />
-                  ))}
-                </div>
+                <IndustryChainGraph
+                  nodes={nodes}
+                  relations={graphRelations}
+                  selectedId={selectedId}
+                  onSelect={handleSelect}
+                />
               )}
-            </aside>
+            </main>
 
-            {/* Detail / editor panel */}
-            <main className="flex-1 overflow-y-auto p-6">
+            {/* Detail / editor sidebar */}
+            {!detailCollapsed && (
+              <aside className="w-[440px] border-l overflow-y-auto shrink-0 flex flex-col">
+                <div className="p-3 border-b flex items-center justify-between">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                    {t('industryChain.nodeDetails')}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                      onClick={() => {
+                        setShowAddForm(true);
+                        setEditing(false);
+                      }}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      {t('industryChain.addNode')}
+                    </button>
+                    <button
+                      className="text-muted-foreground hover:text-foreground"
+                      onClick={() => setDetailCollapsed(true)}
+                      title={t('industryChain.collapseDetail')}
+                    >
+                      <PanelRightClose className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              <div className="flex-1 overflow-y-auto p-4">
               {showAddForm && (
                 <section className="mb-6 p-4 border rounded-lg bg-card">
                   <h3 className="text-sm font-semibold mb-3">{t('industryChain.addNodeForm')}</h3>
@@ -1126,7 +1039,18 @@ export default function IndustryChain() {
                   </div>
                 )
               )}
-            </main>
+              </div>
+              </aside>
+            )}
+            {detailCollapsed && (
+              <button
+                className="w-10 border-l flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent/50 shrink-0"
+                onClick={() => setDetailCollapsed(false)}
+                title={t('industryChain.expandDetail')}
+              >
+                <PanelRightOpen className="h-4 w-4" />
+              </button>
+            )}
           </>
         )}
 

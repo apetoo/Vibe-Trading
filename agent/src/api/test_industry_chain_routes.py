@@ -172,6 +172,43 @@ def test_add_and_list_relation(tmp_path: Path, monkeypatch):
     assert data["relations"][0]["other_name"] == "英伟达"
 
 
+def test_tree_includes_relations(tmp_path: Path, monkeypatch):
+    """The /tree response must carry all relations (bulk) for the graph view,
+    and each edge must be the lean shape (no denormalized peer fields).
+
+    Note: the module-level store is cached across tests (pre-existing isolation
+    quirk), so we assert THIS edge is present + stats consistency rather than
+    an exact global count.
+    """
+    client = _client(tmp_path, monkeypatch)
+    a = client.post("/industry-chain/nodes", json={
+        "parent_id": None, "type": "company", "name": "中际旭创", "code": "300308.SZ",
+    })
+    a_id = a.json()["node"]["id"]
+    b = client.post("/industry-chain/nodes", json={
+        "parent_id": None, "type": "external", "name": "英伟达-GraphTest",
+    })
+    b_id = b.json()["node"]["id"]
+    client.post(f"/industry-chain/nodes/{a_id}/relations", json={
+        "relation_type": "certified_by", "target_id": b_id,
+    })
+
+    resp = client.get("/industry-chain/tree")
+    assert resp.status_code == 200
+    data = resp.json()
+    rels = data["tree"]["relations"]
+    # Our edge is present
+    mine = [r for r in rels if r["source_id"] == a_id and r["target_id"] == b_id]
+    assert len(mine) == 1
+    rel = mine[0]
+    assert rel["relation_type"] == "certified_by"
+    # Lean edge: no denormalized peer fields (those come from per-node /relations)
+    assert "other_name" not in rel
+    assert "other_type" not in rel
+    # stats.total_relations is consistent with the array length
+    assert data["stats"]["total_relations"] == len(rels)
+
+
 def test_add_relation_validation(tmp_path: Path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
     a = client.post("/industry-chain/nodes", json={

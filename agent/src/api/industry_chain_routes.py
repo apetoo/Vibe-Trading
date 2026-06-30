@@ -174,6 +174,7 @@ def register_industry_chain_routes(
     async def get_tree():
         store = _get_store()
         raw_nodes = await asyncio.to_thread(store.get_tree)
+        all_relations = await asyncio.to_thread(store.list_all_relations)
         frontend_nodes = [_to_frontend_node(n) for n in raw_nodes]
         # Build children lists
         node_map = {n["id"]: n for n in frontend_nodes}
@@ -182,10 +183,10 @@ def register_industry_chain_routes(
             if pid and pid in node_map:
                 node_map[pid]["children"].append(n["id"])
         return {
-            "tree": {"nodes": frontend_nodes, "relations": []},
+            "tree": {"nodes": frontend_nodes, "relations": all_relations},
             "stats": {
                 "total_nodes": len(frontend_nodes),
-                "total_relations": 0,
+                "total_relations": len(all_relations),
                 "pending_reviews": 0,
                 "chain_count": sum(1 for n in frontend_nodes if n["type"] == "chain"),
                 "sector_count": sum(1 for n in frontend_nodes if n["type"] == "sector"),
@@ -392,11 +393,12 @@ def register_industry_chain_routes(
     async def get_stats():
         store = _get_store()
         raw_nodes = await asyncio.to_thread(store.get_tree)
+        all_relations = await asyncio.to_thread(store.list_all_relations)
         pending = await asyncio.to_thread(store.list_pending)
         frontend_nodes = [_to_frontend_node(n) for n in raw_nodes]
         return {
             "total_nodes": len(frontend_nodes),
-            "total_relations": 0,
+            "total_relations": len(all_relations),
             "pending_reviews": len(pending),
             "chain_count": sum(1 for n in frontend_nodes if n["type"] == "chain"),
             "sector_count": sum(1 for n in frontend_nodes if n["type"] == "sector"),

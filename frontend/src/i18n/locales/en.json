@@ -416,7 +416,21 @@
     "noRelations": "No supply relations",
     "selectTarget": "Select target node…",
     "confirmDeleteRelation": "Are you sure you want to delete this relation?",
-    "typeExternal": "External Node"
+    "typeExternal": "External Node",
+    "graphTab": "Graph View",
+    "nodeDetails": "Node Details",
+    "collapseDetail": "Collapse",
+    "expandDetail": "Expand Details",
+    "fitView": "Fit View",
+    "relayout": "Relayout",
+    "showTreeEdges": "Hierarchy Edges",
+    "filterByType": "Filter by Type",
+    "searchPlaceholder": "Search nodes…",
+    "tooltipChainPath": "Chain Path",
+    "tooltipRelations": "Relations",
+    "tooltipNoRelations": "No relations",
+    "nodesCount": "{{count}} nodes",
+    "edgesCount": "{{count}} relations"
   },
   "alphaZoo": {
     "title": "Alpha Zoo",

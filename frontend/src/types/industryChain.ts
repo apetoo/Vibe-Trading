@@ -38,6 +38,17 @@ export interface IndustryRelation {
   other_type: string;
 }
 
+/** Lean relation edge for bulk graph loading (no denormalized peer fields).
+ *  Returned by /tree in the `relations` slot. The frontend looks up peer
+ *  names/types from the node list. */
+export interface IndustryRelationEdge {
+  relation_id: string;
+  source_id: string;
+  target_id: string;
+  relation_type: RelationType;
+  note: string;
+}
+
 /** Response wrapper for listing node relations */
 export interface IndustryRelationsResponse {
   relations: IndustryRelation[];
@@ -113,6 +124,8 @@ export interface IndustryRelationCreate {
 /** Represents the full chain tree response */
 export interface IndustryChainTree {
   nodes: IndustryNode[];
+  /** Bulk relation edges for graph loading (populated by /tree). */
+  relations?: IndustryRelationEdge[];
 }
 
 /** Represents a pending review item */
